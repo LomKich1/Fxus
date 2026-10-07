@@ -1,5 +1,17 @@
 package com.lomkich.fxus
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -244,13 +256,7 @@ private fun Dots(label: String, color: Color, fontSize: TextUnit, modifier: Modi
 private fun AssistantMessage(m: Msg) {
     var open by remember { mutableStateOf(false) }
     val thinkingNow = m.streaming && m.content.isEmpty() && m.thinking.isNotEmpty()
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(ColSurface)
-            .padding(14.dp)
-    ) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)) {
         if (m.thinking.isNotEmpty()) {
             val toggle = Modifier
                 .clip(RoundedCornerShape(6.dp))
@@ -274,7 +280,7 @@ private fun AssistantMessage(m: Msg) {
             }
         }
         if (m.content.isNotEmpty()) {
-            SelectionContainer { Text(m.content, color = ColText, fontSize = 16.sp, lineHeight = 23.sp) }
+            SelectionContainer { Text(m.content, color = ColText, fontSize = 16.sp, lineHeight = 24.sp) }
         } else if (m.streaming && m.thinking.isEmpty()) {
             // ещё нет ни одного токена: модель грузится или собирается с мыслями
             Dots("", ColMuted, 16.sp)
@@ -284,20 +290,36 @@ private fun AssistantMessage(m: Msg) {
 
 // ---------- ввод ----------
 
+private enum class Action { MIC, SEND, STOP }
+
+/** Поле и кнопка в одном контейнере. Кнопка: микрофон / отправить / стоп. */
 @Composable
 private fun InputBar(busy: Boolean, onSend: (String) -> Unit, onStop: () -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
+    val action = when {
+        busy -> Action.STOP
+        text.isBlank() -> Action.MIC
+        else -> Action.SEND
+    }
+
+    // Диктовка через системный распознаватель речи: своего аудио-кода у нас нет,
+    // разрешение на микрофон не нужно. Распознанный текст дописывается в поле.
+    val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        val heard = res.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        if (!heard.isNullOrBlank()) text = if (text.isBlank()) heard else "$text $heard"
+    }
+
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(26.dp))
+            .background(ColSurface)
+            .padding(start = 18.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.Bottom,
     ) {
         Box(
-            Modifier
-                .weight(1f)
-                .heightIn(min = 48.dp)
-                .clip(RoundedCornerShape(24.dp))
-                .background(ColSurface)
-                .padding(horizontal = 18.dp, vertical = 12.dp),
+            Modifier.weight(1f).heightIn(min = 44.dp).padding(vertical = 10.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
             if (text.isEmpty()) Text("Сообщение или /help", color = ColMuted, fontSize = 16.sp)
@@ -310,23 +332,110 @@ private fun InputBar(busy: Boolean, onSend: (String) -> Unit, onStop: () -> Unit
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        Spacer(Modifier.width(8.dp))
+        ActionButton(action) {
+            when (action) {
+                Action.STOP -> onStop()
+                Action.SEND -> {
+                    onSend(text)
+                    text = ""
+                }
+                Action.MIC -> {
+                    try {
+                        speech.launch(
+                            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                        )
+                    } catch (e: ActivityNotFoundException) {
+                        // на телефоне нет распознавателя речи, молча ничего не делаем
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Смена иконки: кнопка сжимается в ноль, меняется содержимое, растёт обратно.
+ * Нажимаемая область фиксированные 44dp, сам круг 36dp.
+ */
+@Composable
+private fun ActionButton(action: Action, onClick: () -> Unit) {
+    val scale = remember { Animatable(1f) }
+    var shown by remember { mutableStateOf(action) }
+    LaunchedEffect(action) {
+        if (shown != action) {
+            scale.animateTo(0f, tween(110))
+            shown = action
+        }
+        scale.animateTo(1f, tween(110))
+    }
+    val isMic = shown == Action.MIC
+    Box(
+        Modifier
+            .size(44.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
         Box(
             Modifier
-                .size(48.dp)
+                .size(36.dp)
+                .graphicsLayer {
+                    scaleX = scale.value
+                    scaleY = scale.value
+                }
                 .clip(CircleShape)
-                .background(ColAccent)
-                .clickable {
-                    if (busy) {
-                        onStop()
-                    } else if (text.isNotBlank()) {
-                        onSend(text)
-                        text = ""
-                    }
-                },
+                .background(if (isMic) ColUser else ColAccent),
             contentAlignment = Alignment.Center,
         ) {
-            Text(if (busy) "■" else "↑", color = ColBg, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            ActionIcon(shown, if (isMic) ColText else ColBg)
+        }
+    }
+}
+
+@Composable
+private fun ActionIcon(action: Action, color: Color) {
+    Canvas(Modifier.size(18.dp)) {
+        val w = size.width
+        val h = size.height
+        val sw = 2.dp.toPx()
+        when (action) {
+            Action.SEND -> {
+                // стрелка вверх: ствол и два крыла
+                drawLine(color, Offset(w / 2f, h * 0.92f), Offset(w / 2f, h * 0.08f), sw, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.14f, h * 0.44f), Offset(w / 2f, h * 0.08f), sw, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.86f, h * 0.44f), Offset(w / 2f, h * 0.08f), sw, StrokeCap.Round)
+            }
+            Action.STOP -> {
+                drawRoundRect(
+                    color,
+                    topLeft = Offset(w * 0.16f, h * 0.16f),
+                    size = Size(w * 0.68f, h * 0.68f),
+                    cornerRadius = CornerRadius(w * 0.12f),
+                )
+            }
+            Action.MIC -> {
+                // капсула, дуга-подставка снизу и ножка
+                drawRoundRect(
+                    color,
+                    topLeft = Offset(w * 0.35f, 0f),
+                    size = Size(w * 0.30f, h * 0.58f),
+                    cornerRadius = CornerRadius(w * 0.15f),
+                )
+                drawArc(
+                    color,
+                    startAngle = 0f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.15f, h * 0.18f),
+                    size = Size(w * 0.70f, h * 0.55f),
+                    style = Stroke(width = sw, cap = StrokeCap.Round),
+                )
+                drawLine(color, Offset(w / 2f, h * 0.73f), Offset(w / 2f, h * 0.95f), sw, StrokeCap.Round)
+            }
         }
     }
 }
