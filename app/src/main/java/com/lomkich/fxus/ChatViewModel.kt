@@ -18,7 +18,7 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
-private const val DEFAULT_HOST = "http://127.0.0.1:11434"
+const val DEFAULT_HOST = "http://127.0.0.1:11434"
 
 private const val HELP = """Команды (как в ollama):
 /clear — очистить контекст
@@ -28,9 +28,7 @@ private const val HELP = """Команды (как в ollama):
 /set parameter <имя> <значение>
 /show — текущие настройки
 /load <модель> — сменить модель (контекст сбросится)
-Сверх ollama:
-/models — список моделей на сервере
-/host [url] — адрес сервера"""
+Модель и адрес сервера — в шапке и в настройках."""
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -42,11 +40,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var model by mutableStateOf(prefs.getString("model", "").orEmpty())
         private set
+    var models by mutableStateOf<List<String>>(emptyList())
+        private set
+    var serverError by mutableStateOf<String?>(null)
+        private set
+    var nick by mutableStateOf(prefs.getString("nick", "").orEmpty())
+        private set
+    var host by mutableStateOf(prefs.getString("host", DEFAULT_HOST).orEmpty().ifBlank { DEFAULT_HOST })
+        private set
     /** Растёт на каждый токен, по нему экран решает, пора ли докрутить вниз. */
     var tick by mutableIntStateOf(0)
         private set
 
-    private var host = prefs.getString("host", DEFAULT_HOST).orEmpty().ifBlank { DEFAULT_HOST }
     private var think: Any? = null          // null = не слать поле think вообще
     private var system: String? = null
     private val options = JSONObject()
@@ -55,7 +60,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var nextId = 0L
 
     init {
-        viewModelScope.launch { loadModels(print = false) }
+        refreshModels()
     }
 
     // ---------- ввод ----------
@@ -71,12 +76,33 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         job?.cancel()
     }
 
+    fun newChat() {
+        stop()
+        messages.clear()
+    }
+
+    fun saveSettings(newNick: String, newHost: String) {
+        nick = newNick.trim()
+        host = newHost.trim().trimEnd('/').ifBlank { DEFAULT_HOST }
+        prefs.edit().putString("nick", nick).putString("host", host).apply()
+        refreshModels()
+    }
+
+    fun refreshModels() {
+        viewModelScope.launch { loadModels() }
+    }
+
+    fun selectModel(name: String) {
+        model = name
+        prefs.edit().putString("model", name).apply()
+    }
+
     // ---------- чат ----------
 
     private fun chat(text: String) {
         add(Role.USER, text)
         if (model.isBlank()) {
-            sys("Модель не выбрана. /models, потом /load <имя>.")
+            sys("Модель не выбрана. Выбери её в шапке.")
             return
         }
         val body = buildBody()
@@ -116,7 +142,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun buildBody(): JSONObject {
         val arr = JSONArray()
-        system?.let { arr.put(JSONObject().put("role", "system").put("content", it)) }
+        val sysText = listOfNotNull(
+            system,
+            nick.takeIf { it.isNotBlank() }?.let { "Пользователя зовут $it." },
+        ).joinToString("\n")
+        if (sysText.isNotBlank()) arr.put(JSONObject().put("role", "system").put("content", sysText))
         messages
             .filter { (it.role == Role.USER || it.role == Role.ASSISTANT) && it.content.isNotBlank() }
             .forEach {
@@ -138,7 +168,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun command(line: String) {
         val parts = line.removePrefix("/").trim().split(Regex("\\s+"), limit = 3)
-        val rest = parts.drop(1).joinToString(" ")
         when (val cmd = parts[0].lowercase()) {
             "clear" -> {
                 messages.clear()
@@ -146,7 +175,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
             "set" -> set(parts.getOrNull(1)?.lowercase(), parts.getOrNull(2))
             "show" -> sys(
-                "model: ${model.ifBlank { "—" }}\nhost: $host\nthink: ${think ?: "по умолчанию"}\n" +
+                "model: ${model.ifBlank { "—" }}\nhost: $host\nnick: ${nick.ifBlank { "—" }}\nthink: ${think ?: "по умолчанию"}\n" +
                     "system: ${system ?: "—"}\noptions: $options"
             )
             "load" -> {
@@ -157,17 +186,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     selectModel(name)
                     messages.clear()
                     sys("Модель: $name. Контекст сброшен.")
-                }
-            }
-            "models" -> viewModelScope.launch { loadModels(print = true) }
-            "host" -> {
-                if (rest.isBlank()) {
-                    sys("host: $host")
-                } else {
-                    host = rest.trim().trimEnd('/')
-                    prefs.edit().putString("host", host).apply()
-                    sys("host: $host")
-                    viewModelScope.launch { loadModels(print = false) }
                 }
             }
             "help", "?" -> sys(HELP)
@@ -217,29 +235,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- сервер ----------
 
-    private suspend fun loadModels(print: Boolean) {
+    private suspend fun loadModels() {
         try {
             val list = client.tags(host)
-            if (list.isEmpty()) {
-                sys("На сервере нет моделей. В Termux: ollama pull <имя>")
-                return
-            }
-            if (model.isBlank()) selectModel(list.first())
-            else if (model !in list && !print) sys("Модели $model нет на сервере. /models покажет список.")
-            if (print) sys(list.joinToString("\n") { (if (it == model) "▸ " else "  ") + it })
+            models = list
+            serverError = null
+            if (model.isBlank() && list.isNotEmpty()) selectModel(list.first())
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            sys(describe(e))
+            models = emptyList()
+            serverError = describe(e)
         }
-    }
-
-    private fun selectModel(name: String) {
-        model = name
-        prefs.edit().putString("model", name).apply()
     }
 
     private fun describe(e: Exception): String = when (e) {
         is ConnectException, is UnknownHostException, is SocketTimeoutException ->
-            "Нет связи с $host. Запущен ли ollama serve в Termux?"
+            "Нет связи с $host. Запусти ollama serve в Termux."
         else -> "Ошибка: ${e.message}"
     }
 
