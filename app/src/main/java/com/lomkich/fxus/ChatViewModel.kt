@@ -154,7 +154,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 if (name.isNullOrBlank()) {
                     sys("Использование: /load <модель>")
                 } else {
-                    setModel(name)
+                    selectModel(name)
                     messages.clear()
                     sys("Модель: $name. Контекст сброшен.")
                 }
@@ -224,7 +224,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 sys("На сервере нет моделей. В Termux: ollama pull <имя>")
                 return
             }
-            if (model.isBlank()) setModel(list.first())
+            if (model.isBlank()) selectModel(list.first())
             else if (model !in list && !print) sys("Модели $model нет на сервере. /models покажет список.")
             if (print) sys(list.joinToString("\n") { (if (it == model) "▸ " else "  ") + it })
         } catch (e: Exception) {
@@ -232,7 +232,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun setModel(name: String) {
+    private fun selectModel(name: String) {
         model = name
         prefs.edit().putString("model", name).apply()
     }
