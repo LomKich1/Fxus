@@ -8,7 +8,4 @@ data class Msg(
     val content: String,
     val thinking: String = "",
     val streaming: Boolean = false,
-    /** Когда пошли первые токены рассуждения (мс) и сколько оно длилось (мс). */
-    val thinkStart: Long = 0L,
-    val thinkMs: Long = 0L,
 )
