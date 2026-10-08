@@ -4,7 +4,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -29,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -44,8 +49,10 @@ enum class Screen { CHAT, CHATS, ARTIFACTS, SETTINGS }
 /**
  * Два слоя: меню лежит сзади, экран (чат/настройки/заглушки) сверху.
  * Открытие меню = слой с экраном плавно уезжает вправо.
- * Открыть меню свайпом нельзя (конфликт с системным «назад» и скроллом),
- * а закрыть можно: свайп влево по меню или по сдвинутому экрану.
+ * Закрыть меню: свайп влево по меню или по сдвинутому экрану.
+ * Открыть меню: свайп вправо по чату (только быстрый: если палец сначала зажали дольше
+ * long-press, например чтобы выделить текст, свайпа не будет; жесты, которые забрали
+ * вложенные скроллы, тоже не трогаем). У самого левого края срабатывает системное «назад».
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -84,6 +91,20 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
         }
     }
 
+    // Отпустили палец: решает направление последнего движения, а если палец стоял, то проходит ли меню половину пути.
+    fun settleMenu(pos: Float, last: Float) {
+        val target = when {
+            last < -1f -> false
+            last > 1f -> true
+            else -> pos > 0.5f
+        }
+        if (target != drawerOpen) {
+            drawerOpen = target
+        } else {
+            scope.launch { progress.animateTo(if (target) 1f else 0f, tween(200)) }
+        }
+    }
+
     fun go(target: Screen) {
         screen = target
         drawerOpen = false
@@ -99,17 +120,8 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
             var pos = 0f
             var last = 0f
             fun settle() {
-                val target = when {
-                    last < -1f -> false
-                    last > 1f -> true
-                    else -> pos > 0.5f
-                }
+                settleMenu(pos, last)
                 last = 0f
-                if (target != drawerOpen) {
-                    drawerOpen = target
-                } else {
-                    scope.launch { progress.animateTo(if (target) 1f else 0f, tween(200)) }
-                }
             }
             detectHorizontalDragGestures(
                 onDragStart = { pos = progress.value },
@@ -122,6 +134,38 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                     scope.launch { progress.snapTo(pos) }
                 },
             )
+        }
+
+        // Открытие свайпом вправо по чату. Стоит на слое чата и ловит жест после детей:
+        // если вложенный скролл (список, код) забрал жест, мы его не видим как свободный.
+        val openSwipe = Modifier.pointerInput(drawerPx) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                if (screen != Screen.CHAT || drawerOpen) return@awaitEachGesture
+                var overSlop = 0f
+                // не успели сдвинуться за время long-press = зажатие, не свайп (выделение текста)
+                val first = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                    awaitHorizontalTouchSlopOrCancellation(down.id) { change, over ->
+                        if (over > 0f) { // только вправо
+                            overSlop = over
+                            change.consume()
+                        }
+                    }
+                } ?: return@awaitEachGesture
+                focus.clearFocus()
+                keyboard?.hide()
+                var pos = (overSlop / drawerPx).coerceIn(0f, 1f)
+                var last = overSlop
+                scope.launch { progress.snapTo(pos) }
+                horizontalDrag(first.id) { change ->
+                    val dx = change.positionChange().x
+                    change.consume()
+                    last = dx
+                    pos = (pos + dx / drawerPx).coerceIn(0f, 1f)
+                    scope.launch { progress.snapTo(pos) }
+                }
+                settleMenu(pos, last)
+            }
         }
 
         Box(Modifier.width(drawerWidth).fillMaxHeight().then(dragMenu)) {
@@ -151,6 +195,7 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                 .offset { IntOffset((progress.value * drawerPx).roundToInt(), 0) }
                 .clip(RoundedCornerShape((24f * progress.value).dp))
                 .background(ColBg)
+                .then(openSwipe)
         ) {
             if (screen == Screen.CHAT) {
                 // чат сам рисует контент под системными панелями и сам обрабатывает отступы
