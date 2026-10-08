@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -33,6 +35,11 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun DrawerContent(
     nick: String,
+    chats: List<ChatMeta>,
+    currentId: String?,
+    onOpenChat: (String) -> Unit,
+    onRenameChat: (String, String) -> Unit,
+    onDeleteChat: (String) -> Unit,
     onChats: () -> Unit,
     onArtifacts: () -> Unit,
     onNewChat: () -> Unit,
@@ -56,10 +63,23 @@ fun DrawerContent(
         DrawerItem("Артефакты", onArtifacts)
         Box(Modifier.fillMaxWidth().padding(vertical = 14.dp).height(1.dp).background(ColSurface))
         Text("Недавние", color = ColMuted, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp, bottom = 8.dp))
-        // сюда в 2c приедет список последних чатов
-        Text("Пока пусто", color = ColMuted, fontSize = 15.sp, modifier = Modifier.padding(start = 8.dp))
-
-        Spacer(Modifier.weight(1f))
+        if (chats.isEmpty()) {
+            Text("Пока пусто", color = ColMuted, fontSize = 15.sp, modifier = Modifier.padding(start = 8.dp))
+            Spacer(Modifier.weight(1f))
+        } else {
+            // все чаты и поиск по ним на экране «Чаты», здесь только свежие
+            LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                items(chats.take(15), key = { it.id }) { meta ->
+                    ChatRow(
+                        meta = meta,
+                        selected = meta.id == currentId,
+                        onOpen = { onOpenChat(meta.id) },
+                        onRename = { onRenameChat(meta.id, it) },
+                        onDelete = { onDeleteChat(meta.id) },
+                    )
+                }
+            }
+        }
 
         Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Avatar(nick, 52.dp, Modifier.clickable(onClick = onProfile))

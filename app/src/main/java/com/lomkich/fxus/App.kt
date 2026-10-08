@@ -103,6 +103,14 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
         Box(Modifier.width(drawerWidth).fillMaxHeight().then(dragMenu)) {
             DrawerContent(
                 nick = vm.nick,
+                chats = vm.chats,
+                currentId = vm.currentId,
+                onOpenChat = { id ->
+                    vm.openChat(id)
+                    go(Screen.CHAT)
+                },
+                onRenameChat = vm::renameChat,
+                onDeleteChat = vm::deleteChat,
                 onChats = { go(Screen.CHATS) },
                 onArtifacts = { go(Screen.ARTIFACTS) },
                 onNewChat = {
@@ -129,7 +137,14 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
             ) {
                 when (screen) {
                     Screen.CHAT -> ChatScreen(vm, onMenu = { drawerOpen = true })
-                    Screen.CHATS -> ComingSoon("Чаты") { screen = Screen.CHAT }
+                    Screen.CHATS -> ChatsScreen(
+                        vm,
+                        onOpen = { id ->
+                            vm.openChat(id)
+                            screen = Screen.CHAT
+                        },
+                        onBack = { screen = Screen.CHAT },
+                    )
                     Screen.ARTIFACTS -> ComingSoon("Артефакты") { screen = Screen.CHAT }
                     Screen.SETTINGS -> SettingsScreen(vm) { screen = Screen.CHAT }
                 }

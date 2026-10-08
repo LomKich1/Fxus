@@ -61,6 +61,7 @@ fun ComingSoon(title: String, onBack: () -> Unit) {
 fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
     var host by rememberSaveable { mutableStateOf(vm.host) }
     var nick by rememberSaveable { mutableStateOf(vm.nick) }
+    var system by rememberSaveable { mutableStateOf(vm.systemPrompt) }
     var saved by remember { mutableStateOf(false) }
 
     val status: String? = when {
@@ -91,6 +92,17 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 onChange = { nick = it; saved = false },
                 hint = "Модель будет обращаться к тебе по нику. Без ника в меню силуэт.",
             )
+            Spacer(Modifier.height(20.dp))
+            Field(
+                label = "Системный промпт",
+                value = system,
+                onChange = {
+                    system = it
+                    saved = false
+                },
+                hint = "Для всех чатов. Команда /set system меняет это же поле.",
+                singleLine = false,
+            )
             Spacer(Modifier.height(24.dp))
             Box(
                 Modifier
@@ -98,7 +110,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                     .clip(RoundedCornerShape(24.dp))
                     .background(ColAccent)
                     .clickable {
-                        vm.saveSettings(nick, host)
+                        vm.saveSettings(nick, host, system)
                         saved = true
                     }
                     .padding(horizontal = 28.dp),
@@ -120,6 +132,7 @@ private fun Field(
     onChange: (String) -> Unit,
     hint: String? = null,
     keyboardType: KeyboardType = KeyboardType.Text,
+    singleLine: Boolean = true,
 ) {
     Column {
         Text(label, color = ColMuted, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
@@ -133,7 +146,9 @@ private fun Field(
             BasicTextField(
                 value = value,
                 onValueChange = onChange,
-                singleLine = true,
+                singleLine = singleLine,
+                minLines = if (singleLine) 1 else 4,
+                maxLines = if (singleLine) 1 else 10,
                 textStyle = TextStyle(color = ColText, fontSize = 16.sp),
                 cursorBrush = SolidColor(ColText),
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
