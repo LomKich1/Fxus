@@ -29,7 +29,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -44,6 +47,7 @@ enum class Screen { CHAT, CHATS, ARTIFACTS, SETTINGS }
  * Открыть меню свайпом нельзя (конфликт с системным «назад» и скроллом),
  * а закрыть можно: свайп влево по меню или по сдвинутому экрану.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun FxusApp(vm: ChatViewModel = viewModel()) {
     var screen by rememberSaveable { mutableStateOf(Screen.CHAT) }
@@ -56,8 +60,28 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
         progress.animateTo(if (drawerOpen) 1f else 0f, tween(300))
     }
 
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    // любое открытие меню прячет клавиатуру и снимает фокус с поля (иначе курсор остаётся под меню)
+    fun openDrawer() {
+        focus.clearFocus()
+        keyboard?.hide()
+        drawerOpen = true
+    }
+
+    // из настроек выходим в меню (оттуда пришли), из остальных экранов в чат
+    fun leaveSettings() {
+        screen = Screen.CHAT
+        openDrawer()
+    }
+
     BackHandler(enabled = drawerOpen || screen != Screen.CHAT) {
-        if (drawerOpen) drawerOpen = false else screen = Screen.CHAT
+        when {
+            drawerOpen -> drawerOpen = false
+            screen == Screen.SETTINGS -> leaveSettings()
+            else -> screen = Screen.CHAT
+        }
     }
 
     fun go(target: Screen) {
@@ -130,7 +154,7 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
         ) {
             if (screen == Screen.CHAT) {
                 // чат сам рисует контент под системными панелями и сам обрабатывает отступы
-                ChatScreen(vm, onMenu = { drawerOpen = true })
+                ChatScreen(vm, onMenu = ::openDrawer)
             } else {
                 Column(
                     Modifier
@@ -149,7 +173,7 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                             onBack = { screen = Screen.CHAT },
                         )
                         Screen.ARTIFACTS -> ComingSoon("Артефакты") { screen = Screen.CHAT }
-                        Screen.SETTINGS -> SettingsScreen(vm) { screen = Screen.CHAT }
+                        Screen.SETTINGS -> SettingsScreen(vm, onBack = ::leaveSettings)
                         Screen.CHAT -> Unit
                     }
                 }

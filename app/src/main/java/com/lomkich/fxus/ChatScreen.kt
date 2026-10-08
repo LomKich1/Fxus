@@ -59,7 +59,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +70,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -83,6 +87,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 
 // Затемнение под системными панелями и вокруг пузырей: плотное у края экрана, к контенту сходит в ноль.
 private val ScrimTop = Brush.verticalGradient(listOf(ColBg.copy(alpha = 0.95f), Color.Transparent))
@@ -100,32 +105,74 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
     var topPx by remember { mutableIntStateOf(0) }
     var bottomPx by remember { mutableIntStateOf(0) }
 
-    // «внизу» = последний элемент списка виден; пока читаешь выше, не дёргаем скролл
-    val atBottom by remember {
-        derivedStateOf {
-            val info = listState.layoutInfo
-            val last = info.visibleItemsInfo.lastOrNull()
-            last == null || last.index >= info.totalItemsCount - 1
+    // follow = «едем за низом». Включён, пока чат стоит полностью внизу, выключается,
+    // как только палец начал двигать список (и включается обратно, если отпустили внизу).
+    // Программный скролл (dispatchRawDelta) сюда не попадает: NestedScroll видит только жесты.
+    var follow by remember { mutableStateOf(true) }
+    val userScroll = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                follow = false
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                follow = !listState.canScrollForward
+                return Offset.Zero
+            }
         }
     }
 
-    // новое сообщение: всегда вниз
-    LaunchedEffect(vm.messages.size) {
-        if (vm.messages.isNotEmpty()) {
-            listState.scrollToItem(vm.messages.lastIndex)
-            listState.scrollBy(100_000f)
-        }
+    suspend fun jumpToEnd() {
+        if (vm.messages.isEmpty()) return
+        follow = true
+        listState.scrollToItem(vm.messages.lastIndex)
+        listState.scrollBy(100_000f)
     }
-    // новый токен: вниз, только если пользователь и так внизу
-    LaunchedEffect(vm.tick) {
-        if (atBottom) listState.scrollBy(100_000f)
+
+    // сколько пикселей осталось до низа последнего сообщения (с учётом нижнего отступа)
+    fun distanceToEnd(): Float {
+        val info = listState.layoutInfo
+        val last = info.visibleItemsInfo.lastOrNull() ?: return 0f
+        if (last.index < info.totalItemsCount - 1) return info.viewportSize.height.toFloat()
+        val end = info.viewportEndOffset - info.afterContentPadding
+        return (last.offset + last.size - end).toFloat().coerceAtLeast(0f)
+    }
+
+    // открыли чат из истории (и первый показ экрана): всегда в конец
+    LaunchedEffect(vm.jumpSignal) { jumpToEnd() }
+    // новое сообщение: своё всегда вниз, остальные (ответ, заметки) только если едем за низом
+    LaunchedEffect(vm.messages.size) {
+        val last = vm.messages.lastOrNull() ?: return@LaunchedEffect
+        if (last.role == Role.USER || follow) jumpToEnd()
+    }
+
+    // Плавный автоскролл: каждый кадр проезжаем долю оставшегося пути, а не прыгаем на каждый токен.
+    // Крутится только пока идёт стрим (+ до 45 кадров доехать после конца).
+    val minStepPx = with(density) { 1.5.dp.toPx() }
+    LaunchedEffect(Unit) {
+        var wasBusy = false
+        snapshotFlow { vm.busy }.collectLatest { busy ->
+            if (!busy && !wasBusy) return@collectLatest
+            wasBusy = true
+            var spare = 45
+            while (busy || spare-- > 0) {
+                withFrameNanos { }
+                if (!follow) continue
+                if (!listState.canScrollForward) {
+                    if (!busy) break
+                    continue
+                }
+                listState.dispatchRawDelta((distanceToEnd() * 0.2f).coerceAtLeast(minStepPx))
+            }
+        }
     }
 
     // imePadding: при клавиатуре весь экран чата сжимается над ней
     Box(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().nestedScroll(userScroll),
             contentPadding = PaddingValues(
                 start = 12.dp,
                 end = 12.dp,

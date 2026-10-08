@@ -62,8 +62,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** null = новый чат, который ещё ни разу не сохранялся. */
     var currentId by mutableStateOf<String?>(null)
         private set
-    /** Растёт на каждый токен, по нему экран решает, пора ли докрутить вниз. */
-    var tick by mutableIntStateOf(0)
+    /** Растёт, когда экран должен безусловно прыгнуть в конец списка (открыли чат из истории). */
+    var jumpSignal by mutableIntStateOf(0)
         private set
 
     private var think: Any? = null          // null = не слать поле think вообще
@@ -121,7 +121,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             messages.clear()
             messages.addAll(loaded.map { it.copy(id = nextId++) })
             currentId = id
-            tick++
+            jumpSignal++
         }
     }
 
@@ -208,7 +208,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             thinkMs = thinkMs,
                         )
                     }
-                    tick++
                 }
                 if (content.isEmpty() && thinking.isNotEmpty()) {
                     sys("Модель выдала только рассуждения, без ответа. Попробуй /set nothink.")
