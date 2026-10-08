@@ -19,11 +19,13 @@ val LocalHazeState = staticCompositionLocalOf<HazeState?> { null }
  * Фон плавающих пузырей (шапка, поле ввода): размытие того, что лежит под ними (Haze),
  * сверху полупрозрачная заливка и тонкая кромка. Весь вид пузырей живёт здесь.
  * Блюр работает с Android 12 (API 31). Ниже него заливка плотнее, как до Haze.
+ * strong = true: то же размытие, но плотная заливка (для списков поверх текста).
  */
 @Composable
-fun Modifier.glass(shape: Shape): Modifier {
+fun Modifier.glass(shape: Shape, strong: Boolean = false): Modifier {
     val haze = LocalHazeState.current
-    val blurred = haze != null && Build.VERSION.SDK_INT >= 31
+    // strong: плотнее заливка (выпадающий список поверх текста должен читаться)
+    val blurred = haze != null && Build.VERSION.SDK_INT >= 31 && !strong
     var m = this.clip(shape)
     if (haze != null) {
         m = m.hazeEffect(state = haze) {

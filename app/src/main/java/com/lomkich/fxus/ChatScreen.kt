@@ -12,7 +12,15 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.height
@@ -54,8 +62,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -108,6 +114,8 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
     val density = LocalDensity.current
     var topPx by remember { mutableIntStateOf(0) }
     var bottomPx by remember { mutableIntStateOf(0) }
+    var modelOpen by remember { mutableStateOf(false) }
+    BackHandler(enabled = modelOpen) { modelOpen = false }
 
     // follow = «едем за низом». Включён, пока чат стоит полностью внизу, выключается,
     // как только палец начал двигать список (и включается обратно, если отпустили внизу).
@@ -211,7 +219,18 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
                 .statusBarsPadding()
                 .padding(bottom = 12.dp)
         ) {
-            Header(vm, onMenu)
+            Header(
+                vm = vm,
+                open = modelOpen,
+                onMenu = {
+                    modelOpen = false
+                    onMenu()
+                },
+                onToggle = {
+                    if (!modelOpen) vm.refreshModels()
+                    modelOpen = !modelOpen
+                },
+            )
         }
 
         // низ: затемнение + пузырь ввода + панель навигации (при клавиатуре её отступ уже съеден)
@@ -226,33 +245,62 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
         ) {
             InputBar(busy = vm.busy, onSend = vm::send, onStop = vm::stop)
         }
+
+        // Список моделей. Невидимый слой ловит тап мимо и закрывает список.
+        if (modelOpen) {
+            Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { modelOpen = false } })
+        }
+        // Панель плавно «разворачивается» вниз из-под пилюли. Слева 64dp = отступ + кнопка меню + зазор,
+        // сверху чуть выше нижнего края пилюли (topPx включает нижний отступ шапки 12dp и 4dp строки).
+        AnimatedVisibility(
+            visible = modelOpen,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(
+                    start = 64.dp,
+                    end = 12.dp,
+                    top = maxOf(0.dp, with(density) { topPx.toDp() } - 10.dp),
+                ),
+            enter = fadeIn(tween(160)) + expandVertically(tween(260), expandFrom = Alignment.Top),
+            exit = fadeOut(tween(140)) + shrinkVertically(tween(200), shrinkTowards = Alignment.Top),
+        ) {
+            ModelList(vm) { modelOpen = false }
+        }
     }
     }
 }
 
-// ---------- шапка: три отдельных пузыря ----------
+// ---------- шапка: кнопка меню и пилюля выбора модели ----------
 
 @Composable
-private fun Header(vm: ChatViewModel, onMenu: () -> Unit) {
+private fun Header(vm: ChatViewModel, open: Boolean, onMenu: () -> Unit, onToggle: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         MenuButton(onMenu)
         Spacer(Modifier.width(8.dp))
-        // здесь потом будет название чата, пока заглушка
-        Box(
+        Row(
             Modifier
                 .weight(1f)
                 .height(44.dp)
                 .glass(RoundedCornerShape(22.dp))
+                .clickable(onClick = onToggle)
                 .padding(horizontal = 18.dp),
-            contentAlignment = Alignment.CenterStart,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Fxus", color = ColText, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (vm.model.isBlank()) "Выбрать модель" else vm.model,
+                color = ColText,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            Chevron(open)
         }
-        Spacer(Modifier.width(8.dp))
-        ModelPill(vm)
     }
 }
 
@@ -277,60 +325,63 @@ private fun MenuButton(onClick: () -> Unit) {
     }
 }
 
+/** Панель со списком моделей: стекло, строки со скруглённой подсветкой выбранной. */
 @Composable
-private fun ModelPill(vm: ChatViewModel) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        Row(
-            Modifier
-                .height(44.dp)
-                .glass(RoundedCornerShape(22.dp))
-                .clickable {
-                    open = true
-                    vm.refreshModels()
-                }
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+private fun ModelList(vm: ChatViewModel, onPicked: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .glass(RoundedCornerShape(22.dp), strong = true)
+            .heightIn(max = 320.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        if (vm.models.isEmpty()) {
             Text(
-                if (vm.model.isBlank()) "нет модели" else vm.model,
-                color = ColText,
+                vm.serverError ?: "Моделей нет. В Termux: ollama pull <имя>",
+                color = ColMuted,
                 fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 130.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
             )
-            Spacer(Modifier.width(6.dp))
-            Text("▾", color = ColMuted, fontSize = 12.sp)
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            if (vm.models.isEmpty()) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            vm.serverError ?: "Моделей нет. В Termux: ollama pull <имя>",
-                            color = ColMuted,
-                            fontSize = 14.sp,
-                        )
-                    },
-                    onClick = { vm.refreshModels() },
-                )
-            } else {
-                vm.models.forEach { name ->
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (name == vm.model) "✓  $name" else name,
-                                color = if (name == vm.model) ColText else ColMuted,
-                                fontSize = 15.sp,
-                            )
-                        },
-                        onClick = {
-                            vm.selectModel(name)
-                            open = false
-                        },
-                    )
+        } else {
+            vm.models.forEach { name ->
+                ModelRow(name, selected = name == vm.model) {
+                    vm.selectModel(name)
+                    onPicked()
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelRow(name: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(46.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) ColUser.copy(alpha = 0.7f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            name,
+            color = if (selected) ColText else ColThink,
+            fontSize = 15.sp,
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            Spacer(Modifier.width(8.dp))
+            Canvas(Modifier.size(16.dp)) {
+                val sw = 2.dp.toPx()
+                drawLine(ColText, Offset(size.width * 0.1f, size.height * 0.55f), Offset(size.width * 0.4f, size.height * 0.85f), sw, StrokeCap.Round)
+                drawLine(ColText, Offset(size.width * 0.4f, size.height * 0.85f), Offset(size.width * 0.9f, size.height * 0.2f), sw, StrokeCap.Round)
             }
         }
     }
