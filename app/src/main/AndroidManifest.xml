@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Termux объявляет это разрешение как dangerous: выдаётся пользователем один раз -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+
+    <!-- Android 11+: без этого приложение не видит, установлен ли Termux -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
 
     <application
         android:allowBackup="false"

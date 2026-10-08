@@ -12,6 +12,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -64,6 +65,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     /** Растёт, когда экран должен безусловно прыгнуть в конец списка (открыли чат из истории). */
     var jumpSignal by mutableIntStateOf(0)
+        private set
+
+    /** Идёт запуск ollama serve через Termux. */
+    var launching by mutableStateOf(false)
+        private set
+    /** Последнее сообщение о запуске для экрана настроек. */
+    var launchNote by mutableStateOf<String?>(null)
         private set
 
     private var think: Any? = null          // null = не слать поле think вообще
@@ -328,6 +336,68 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         v.toIntOrNull() ?: v.toDoubleOrNull() ?: v.toBooleanStrictOrNull() ?: v
 
     // ---------- сервер ----------
+
+    fun reportLaunch(text: String) {
+        launchNote = text
+    }
+
+    private suspend fun reachable(): Boolean = try {
+        client.tags(host)
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        false
+    }
+
+    /**
+     * Запуск ollama serve в Termux и ожидание, пока сервер начнёт отвечать (до 30 с).
+     * Разрешение RUN_COMMAND должно быть уже выдано, его запрашивает экран настроек.
+     */
+    fun startOllama() {
+        if (launching) return
+        viewModelScope.launch {
+            launching = true
+            launchNote = null
+            try {
+                if (reachable()) {
+                    launchNote = "Уже работает"
+                    loadModels()
+                    return@launch
+                }
+                if (!host.contains("127.0.0.1") && !host.contains("localhost")) {
+                    launchNote = "Адрес не локальный ($host), запускать на этом телефоне нечего"
+                    return@launch
+                }
+                val ctx = getApplication<Application>()
+                if (!Termux.installed(ctx)) {
+                    launchNote = "Termux не установлен"
+                    return@launch
+                }
+                if (!Termux.hasPermission(ctx)) {
+                    launchNote = "Нет разрешения на команды в Termux"
+                    return@launch
+                }
+                val err = Termux.run(ctx, Termux.START_OLLAMA)
+                if (err != null) {
+                    launchNote = "Команда не ушла: $err"
+                    return@launch
+                }
+                launchNote = "Команда отправлена, жду сервер…"
+                repeat(30) {
+                    delay(1000)
+                    if (reachable()) {
+                        loadModels()
+                        launchNote = "Запущено"
+                        return@launch
+                    }
+                }
+                launchNote = "Сервер не ответил за 30 с. Проверь allow-external-apps=true в Termux и ~/ollama.log"
+            } finally {
+                launching = false
+            }
+        }
+    }
 
     private suspend fun loadModels() {
         try {

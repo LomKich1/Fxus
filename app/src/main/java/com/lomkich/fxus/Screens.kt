@@ -1,5 +1,7 @@
 package com.lomkich.fxus
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -28,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -63,6 +66,16 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
     var nick by rememberSaveable { mutableStateOf(vm.nick) }
     var system by rememberSaveable { mutableStateOf(vm.systemPrompt) }
     var saved by remember { mutableStateOf(false) }
+    val ctx = LocalContext.current
+
+    // Разрешение com.termux.permission.RUN_COMMAND: системный диалог, потом сразу запускаем
+    val askTermux = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            vm.startOllama()
+        } else {
+            vm.reportLaunch("Разрешение не выдано. Настройки Android → Приложения → Fxus → Разрешения")
+        }
+    }
 
     val status: String? = when {
         vm.serverError != null -> vm.serverError
@@ -85,6 +98,27 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 hint = status,
                 keyboardType = KeyboardType.Uri,
             )
+            Spacer(Modifier.height(12.dp))
+            Box(
+                Modifier
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(ColSurface)
+                    .clickable(enabled = !vm.launching) {
+                        if (Termux.hasPermission(ctx)) vm.startOllama() else askTermux.launch(Termux.PERMISSION)
+                    }
+                    .padding(horizontal = 22.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    if (vm.launching) "Запускаю…" else "Запустить Ollama в Termux",
+                    color = if (vm.launching) ColMuted else ColText,
+                    fontSize = 15.sp,
+                )
+            }
+            vm.launchNote?.let {
+                Text(it, color = ColMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, start = 4.dp))
+            }
             Spacer(Modifier.height(20.dp))
             Field(
                 label = "Ник",
