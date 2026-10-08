@@ -12,6 +12,20 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -224,7 +238,7 @@ private fun MessageItem(m: Msg) {
                     .background(ColUser)
                     .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
-                SelectionContainer { Text(m.content, color = ColText, fontSize = 16.sp) }
+                SelectionContainer { Markdown(m.content) }
             }
         }
         Role.ASSISTANT -> AssistantMessage(m)
@@ -239,7 +253,7 @@ private fun MessageItem(m: Msg) {
     }
 }
 
-/** Текст с точками, которые вырастают по одной до трёх и сбрасываются. */
+/** Текст с точками: вырастают по одной до трёх и сбрасываются. Под точки зарезервирована ширина, чтобы соседи не прыгали. */
 @Composable
 private fun Dots(label: String, color: Color, fontSize: TextUnit, modifier: Modifier = Modifier) {
     var n by remember { mutableIntStateOf(0) }
@@ -249,38 +263,142 @@ private fun Dots(label: String, color: Color, fontSize: TextUnit, modifier: Modi
             n = (n + 1) % 4
         }
     }
-    Text(label + ".".repeat(n), color = color, fontSize = fontSize, modifier = modifier)
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        if (label.isNotEmpty()) Text(label, color = color, fontSize = fontSize)
+        Box(Modifier.width((fontSize.value * 1.2f).dp)) {
+            Text(".".repeat(n), color = color, fontSize = fontSize)
+        }
+    }
+}
+
+@Composable
+private fun Chevron(open: Boolean) {
+    val rot by animateFloatAsState(if (open) 180f else 0f, tween(200), label = "chevron")
+    Canvas(Modifier.size(12.dp).graphicsLayer { rotationZ = rot }) {
+        val sw = 1.5.dp.toPx()
+        drawLine(ColMuted, Offset(size.width * 0.15f, size.height * 0.35f), Offset(size.width / 2f, size.height * 0.7f), sw, StrokeCap.Round)
+        drawLine(ColMuted, Offset(size.width * 0.85f, size.height * 0.35f), Offset(size.width / 2f, size.height * 0.7f), sw, StrokeCap.Round)
+    }
+}
+
+/** «Думает… 35с ⌄» пока идут рассуждения, потом «Думал 35с ⌄». */
+@Composable
+private fun ThinkingHeader(thinkingNow: Boolean, seconds: Int, open: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (thinkingNow) {
+            Dots("Думает", ColThink, 13.sp)
+        } else {
+            Text("Думал", color = ColThink, fontSize = 13.sp)
+        }
+        if (seconds > 0) {
+            Spacer(Modifier.width(8.dp))
+            Text("${seconds}с", color = ColMuted, fontSize = 13.sp)
+        }
+        Spacer(Modifier.width(6.dp))
+        Chevron(open)
+    }
+}
+
+/**
+ * Бегущие строки: хвост потока рассуждений, максимум 3 строки.
+ * Текст прижат к низу, новые строки выталкивают старые вверх, верхний край плавно гаснет.
+ */
+@Composable
+private fun ThinkingTicker(text: String) {
+    var lines by remember { mutableIntStateOf(0) }
+    val fadePx = with(LocalDensity.current) { 18.dp.toPx() }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 2.dp, bottom = 8.dp)
+            .animateContentSize()
+            .heightIn(max = 60.dp)
+            .clipToBounds()
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                if (lines > 3) {
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black),
+                            startY = 0f,
+                            endY = fadePx,
+                        ),
+                        size = Size(size.width, fadePx),
+                        blendMode = BlendMode.DstIn,
+                    )
+                }
+            }
+    ) {
+        Text(
+            text,
+            color = ColThink,
+            fontSize = 13.sp,
+            lineHeight = 20.sp,
+            onTextLayout = { lines = it.lineCount },
+            modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.Bottom, unbounded = true),
+        )
+    }
+}
+
+/** Развёрнутые рассуждения: рамка без заливки, при стриме прокручивается за текстом. */
+@Composable
+private fun ThinkingBox(text: String, follow: Boolean) {
+    val scroll = rememberScrollState()
+    LaunchedEffect(text.length) {
+        if (follow) scroll.scrollTo(scroll.maxValue)
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp, bottom = 8.dp)
+            .border(1.dp, ColMuted.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+            .heightIn(max = 280.dp)
+            .verticalScroll(scroll)
+            .padding(12.dp)
+    ) {
+        SelectionContainer {
+            Text(text, color = ColThink, fontSize = 13.sp, lineHeight = 20.sp)
+        }
+    }
 }
 
 @Composable
 private fun AssistantMessage(m: Msg) {
     var open by remember { mutableStateOf(false) }
     val thinkingNow = m.streaming && m.content.isEmpty() && m.thinking.isNotEmpty()
+
+    // секундомер тикает только пока идут рассуждения
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(thinkingNow) {
+        while (thinkingNow) {
+            now = System.currentTimeMillis()
+            delay(500)
+        }
+    }
+    val seconds = if (thinkingNow) {
+        ((now - m.thinkStart) / 1000).toInt().coerceAtLeast(0)
+    } else {
+        (m.thinkMs / 1000).toInt()
+    }
+
     Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)) {
         if (m.thinking.isNotEmpty()) {
-            val toggle = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .clickable { open = !open }
-                .padding(vertical = 4.dp)
-            if (thinkingNow) {
-                Dots("Думает", ColMuted, 13.sp, toggle)
-            } else {
-                Text("Рассуждения", color = ColMuted, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = toggle)
-            }
-            if (open) {
-                SelectionContainer {
-                    Text(
-                        m.thinking,
-                        color = ColMuted,
-                        fontSize = 13.sp,
-                        fontStyle = FontStyle.Italic,
-                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
-                    )
-                }
+            ThinkingHeader(thinkingNow, seconds, open) { open = !open }
+            when {
+                open -> ThinkingBox(m.thinking, follow = thinkingNow)
+                thinkingNow -> ThinkingTicker(m.thinking)
+                else -> Spacer(Modifier.height(6.dp))
             }
         }
         if (m.content.isNotEmpty()) {
-            SelectionContainer { Text(m.content, color = ColText, fontSize = 16.sp, lineHeight = 24.sp) }
+            SelectionContainer { Markdown(m.content, Modifier.fillMaxWidth()) }
         } else if (m.streaming && m.thinking.isEmpty()) {
             // ещё нет ни одного токена: модель грузится или собирается с мыслями
             Dots("", ColMuted, 16.sp)

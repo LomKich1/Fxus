@@ -112,11 +112,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         job = viewModelScope.launch {
             val content = StringBuilder()
             val thinking = StringBuilder()
+            var thinkStart = 0L
+            var thinkMs = 0L
             try {
                 client.chat(host, body).collect { c ->
+                    val now = System.currentTimeMillis()
+                    if (thinkStart == 0L && c.thinking.isNotEmpty()) thinkStart = now
+                    if (thinkStart != 0L && thinkMs == 0L && c.content.isNotEmpty()) thinkMs = now - thinkStart
                     content.append(c.content)
                     thinking.append(c.thinking)
-                    update(replyId) { it.copy(content = content.toString(), thinking = thinking.toString()) }
+                    update(replyId) {
+                        it.copy(
+                            content = content.toString(),
+                            thinking = thinking.toString(),
+                            thinkStart = thinkStart,
+                            thinkMs = thinkMs,
+                        )
+                    }
                     tick++
                 }
                 if (content.isEmpty() && thinking.isNotEmpty()) {
@@ -129,11 +141,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 if (!stopped) sys(describe(e))
             } finally {
+                if (thinkStart != 0L && thinkMs == 0L) thinkMs = System.currentTimeMillis() - thinkStart
                 val i = messages.indexOfFirst { it.id == replyId }
                 if (i >= 0) {
                     val m = messages[i]
                     if (m.content.isEmpty() && m.thinking.isEmpty()) messages.removeAt(i)
-                    else messages[i] = m.copy(streaming = false)
+                    else messages[i] = m.copy(streaming = false, thinkMs = thinkMs)
                 }
                 busy = false
             }

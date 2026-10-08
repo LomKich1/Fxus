@@ -14,6 +14,10 @@ val ColUser = Color(0xFF353A42)
 val ColText = Color(0xFFE2E4E7)
 val ColMuted = Color(0xFF8B9099)
 val ColAccent = Color(0xFFECEDEF)
+val ColThink = Color(0xFFA0A5AD)   // текст рассуждений
+val ColCode = Color(0xFF2D3036)    // окно кода: серое, не белое
+val ColCodeBg = Color(0xFF383C43)  // плашка инлайн-кода
+val ColLink = Color(0xFF9DB4D6)
 
 @Composable
 fun FxusTheme(content: @Composable () -> Unit) {
