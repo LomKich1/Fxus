@@ -58,6 +58,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -86,6 +87,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 
@@ -101,6 +104,7 @@ private val ScrimBottom = Brush.verticalGradient(listOf(Color.Transparent, ColBg
 @Composable
 fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
     val listState = rememberLazyListState()
+    val hazeState = remember { HazeState() }
     val density = LocalDensity.current
     var topPx by remember { mutableIntStateOf(0) }
     var bottomPx by remember { mutableIntStateOf(0) }
@@ -169,10 +173,13 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
     }
 
     // imePadding: при клавиатуре весь экран чата сжимается над ней
+    CompositionLocalProvider(LocalHazeState provides hazeState) {
     Box(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().nestedScroll(userScroll),
+            // hazeSource: всё, что рисуется в списке (вместе с фоном), пузыри шапки и ввода размывают под собой.
+            // Пузыри лежат рядом со списком, а не внутри него, иначе Haze не работает.
+            modifier = Modifier.fillMaxSize().nestedScroll(userScroll).hazeSource(hazeState).background(ColBg),
             contentPadding = PaddingValues(
                 start = 12.dp,
                 end = 12.dp,
@@ -219,6 +226,7 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
         ) {
             InputBar(busy = vm.busy, onSend = vm::send, onStop = vm::stop)
         }
+    }
     }
 }
 

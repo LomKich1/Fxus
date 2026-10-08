@@ -19,6 +19,7 @@ val ColCode = Color(0xFF2D3036)    // окно кода: серое, не бел
 val ColCodeBg = Color(0xFF383C43)  // плашка инлайн-кода
 val ColLink = Color(0xFF9DB4D6)
 val ColGlass = Color(0xCC24272C)   // «стекло» пузырей: полупрозрачный графит
+val ColGlassBlur = Color(0x8C24272C) // заливка поверх размытия (API 31+): прозрачнее, чтобы блюр был виден
 val ColGlassEdge = Color(0x14FFFFFF) // тонкая кромка, чтобы пузырь читался на тёмном
 
 @Composable
