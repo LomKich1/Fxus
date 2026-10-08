@@ -47,4 +47,7 @@ object Termux {
 
     /** wake-lock, чтобы Android не усыпил Termux, и сервер в отрыве от сессии. Лог в ~/ollama.log. */
     val START_OLLAMA = "termux-wake-lock 2>/dev/null; nohup $OLLAMA serve > $HOME/ollama.log 2>&1 &"
+
+    /** SIGTERM всем процессам с именем ollama (сервер и его раннеры), заодно снимаем wake-lock. */
+    const val STOP_OLLAMA = "pkill -x ollama 2>/dev/null || killall ollama 2>/dev/null; termux-wake-unlock 2>/dev/null"
 }

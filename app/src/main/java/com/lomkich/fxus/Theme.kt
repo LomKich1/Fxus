@@ -17,6 +17,7 @@ val ColAccent = Color(0xFFECEDEF)
 val ColThink = Color(0xFFA0A5AD)   // текст рассуждений
 val ColCode = Color(0xFF2D3036)    // окно кода: серое, не белое
 val ColCodeBg = Color(0xFF383C43)  // плашка инлайн-кода
+val ColCodeBgUser = Color(0xFF4C525C) // инлайн-код внутри пузыря пользователя: светлее ColUser, иначе сливается
 val ColLink = Color(0xFF9DB4D6)
 val ColGlass = Color(0xCC24272C)   // «стекло» пузырей: полупрозрачный графит
 val ColGlassBlur = Color(0x8C24272C) // заливка поверх размытия (API 31+): прозрачнее, чтобы блюр был виден

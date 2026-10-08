@@ -70,7 +70,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Идёт запуск ollama serve через Termux. */
     var launching by mutableStateOf(false)
         private set
-    /** Последнее сообщение о запуске для экрана настроек. */
+    /** Идёт остановка ollama serve через Termux. */
+    var stopping by mutableStateOf(false)
+        private set
+    /** Сервер на этом же телефоне: только тогда его можно запускать и останавливать из приложения. */
+    val isLocalHost: Boolean get() = host.contains("127.0.0.1") || host.contains("localhost")
+    /** Последнее сообщение о запуске/остановке сервера (показывается в списке моделей). */
     var launchNote by mutableStateOf<String?>(null)
         private set
 
@@ -365,7 +370,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     loadModels()
                     return@launch
                 }
-                if (!host.contains("127.0.0.1") && !host.contains("localhost")) {
+                if (!isLocalHost) {
                     launchNote = "Адрес не локальный ($host), запускать на этом телефоне нечего"
                     return@launch
                 }
@@ -399,6 +404,42 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Остановка ollama serve в Termux и ожидание, пока сервер перестанет отвечать (до 7 с). */
+    fun stopOllama() {
+        if (stopping || launching) return
+        viewModelScope.launch {
+            stopping = true
+            launchNote = null
+            try {
+                val ctx = getApplication<Application>()
+                if (!Termux.installed(ctx)) {
+                    launchNote = "Termux не установлен"
+                    return@launch
+                }
+                if (!Termux.hasPermission(ctx)) {
+                    launchNote = "Нет разрешения на команды в Termux"
+                    return@launch
+                }
+                val err = Termux.run(ctx, Termux.STOP_OLLAMA)
+                if (err != null) {
+                    launchNote = "Команда не ушла: $err"
+                    return@launch
+                }
+                repeat(14) {
+                    delay(500)
+                    if (!reachable()) {
+                        loadModels()
+                        launchNote = "Остановлено"
+                        return@launch
+                    }
+                }
+                launchNote = "Сервер всё ещё отвечает"
+            } finally {
+                stopping = false
+            }
+        }
+    }
+
     private suspend fun loadModels() {
         try {
             val list = client.tags(host)
@@ -415,7 +456,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun describe(e: Exception): String = when (e) {
         is ConnectException, is UnknownHostException, is SocketTimeoutException ->
-            "Нет связи с $host. Запусти ollama serve в Termux."
+            if (isLocalHost) "Ollama не запущена. Нажми на модель в шапке и запусти её." else "Нет связи с $host"
         else -> "Ошибка: ${e.message}"
     }
 

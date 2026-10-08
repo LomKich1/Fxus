@@ -18,7 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,10 +28,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -141,6 +148,11 @@ private fun parseMarkdown(src: String): List<Block> {
 //    Незакрытая разметка остаётся буквальным текстом, пока не закроется (важно для стрима).
 // =====================================================================
 
+private const val CODE_TAG = "code"
+
+/** Цвет плашки инлайн-кода: у пользователя светлее, чтобы читалась на фоне его пузыря. */
+private val LocalCodeBg = compositionLocalOf { ColCodeBg }
+
 private fun AnnotatedString.Builder.md(src: String) {
     var i = 0
     while (i < src.length) {
@@ -148,9 +160,13 @@ private fun AnnotatedString.Builder.md(src: String) {
         if (c == '`') {
             val end = src.indexOf('`', i + 1)
             if (end > i + 1) {
-                withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = ColCodeBg, fontSize = 14.sp)) {
+                // фон рисуем сами со скруглением (см. MdText), SpanStyle.background скруглять не умеет.
+                // Аннотация только помечает диапазон.
+                val from = length
+                withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp)) {
                     append(src.substring(i + 1, end))
                 }
+                addStringAnnotation(CODE_TAG, "", from, length)
                 i = end + 1
                 continue
             }
@@ -209,16 +225,18 @@ private fun AnnotatedString.Builder.md(src: String) {
 
 /** Текст с markdown. Оборачивай в SelectionContainer снаружи, если нужно выделение. */
 @Composable
-fun Markdown(text: String, modifier: Modifier = Modifier) {
+fun Markdown(text: String, modifier: Modifier = Modifier, codeBg: Color = ColCodeBg) {
     val blocks = remember(text) { parseMarkdown(text) }
-    Column(modifier) {
-        blocks.forEachIndexed { idx, b ->
-            val gap = when {
-                idx == 0 -> 0.dp
-                b is Item && blocks[idx - 1] is Item -> 4.dp
-                else -> 10.dp
+    CompositionLocalProvider(LocalCodeBg provides codeBg) {
+        Column(modifier) {
+            blocks.forEachIndexed { idx, b ->
+                val gap = when {
+                    idx == 0 -> 0.dp
+                    b is Item && blocks[idx - 1] is Item -> 4.dp
+                    else -> 10.dp
+                }
+                Box(Modifier.padding(top = gap)) { RenderBlock(b) }
             }
-            Box(Modifier.padding(top = gap)) { RenderBlock(b) }
         }
     }
 }
@@ -267,14 +285,54 @@ private fun MdText(
     modifier: Modifier = Modifier,
 ) {
     val styled = remember(text) { buildAnnotatedString { md(text) } }
+    val codeBg = LocalCodeBg.current
+    // раскладку держим в обычном массиве, не в state: рисование идёт после layout в том же кадре
+    val layout = remember { arrayOfNulls<TextLayoutResult>(1) }
     Text(
         styled,
         color = color,
         fontSize = size,
         lineHeight = size * 1.5f,
         fontWeight = weight,
-        modifier = modifier,
+        onTextLayout = { layout[0] = it },
+        modifier = modifier.drawBehind {
+            val l = layout[0] ?: return@drawBehind
+            drawCodeBackgrounds(l, styled, codeBg)
+        },
     )
+}
+
+/**
+ * Скруглённые плашки под инлайн-кодом. Для каждой строки, которую занимает фрагмент,
+ * рисуем свой прямоугольник: левый край по первому символу, правый по последнему.
+ * Плашка рисуется под текстом, поэтому системное выделение поверх неё остаётся видимым.
+ */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCodeBackgrounds(
+    layout: TextLayoutResult,
+    text: AnnotatedString,
+    color: Color,
+) {
+    val padX = 2.dp.toPx()
+    val padY = 2.dp.toPx()
+    val radius = CornerRadius(5.dp.toPx())
+    val total = layout.layoutInput.text.length
+    for (r in text.getStringAnnotations(CODE_TAG, 0, text.length)) {
+        val start = r.start.coerceIn(0, total)
+        val end = r.end.coerceIn(0, total)
+        if (end <= start) continue
+        for (line in layout.getLineForOffset(start)..layout.getLineForOffset(end - 1)) {
+            val from = maxOf(start, layout.getLineStart(line))
+            val to = minOf(end, layout.getLineEnd(line))
+            if (to <= from) continue
+            val a = layout.getBoundingBox(from)
+            val b = layout.getBoundingBox(to - 1)
+            val left = minOf(a.left, b.left) - padX
+            val right = maxOf(a.right, b.right) + padX
+            val top = layout.getLineTop(line) + padY
+            val bottom = layout.getLineBottom(line) - padY
+            drawRoundRect(color, Offset(left, top), Size(right - left, bottom - top), radius)
+        }
+    }
 }
 
 /** Серое окно: сверху язык (расширение) и «копировать», ниже код с горизонтальной прокруткой. */

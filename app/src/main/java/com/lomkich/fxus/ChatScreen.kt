@@ -13,6 +13,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
@@ -88,7 +90,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -116,6 +121,28 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
     var bottomPx by remember { mutableIntStateOf(0) }
     var modelOpen by remember { mutableStateOf(false) }
     BackHandler(enabled = modelOpen) { modelOpen = false }
+
+    // Запуск/остановка сервера идут через Termux и требуют его разрешения RUN_COMMAND.
+    // Если оно ещё не выдано, показываем системный диалог и после согласия выполняем отложенное действие.
+    val ctx = LocalContext.current
+    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val askTermux = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val action = pendingAction
+        pendingAction = null
+        if (granted) {
+            action?.invoke()
+        } else {
+            vm.reportLaunch("Разрешение не выдано. Настройки Android → Приложения → Fxus → Разрешения")
+        }
+    }
+    fun withTermux(action: () -> Unit) {
+        if (Termux.hasPermission(ctx)) {
+            action()
+        } else {
+            pendingAction = action
+            askTermux.launch(Termux.PERMISSION)
+        }
+    }
 
     // follow = «едем за низом». Включён, пока чат стоит полностью внизу, выключается,
     // как только палец начал двигать список (и включается обратно, если отпустили внизу).
@@ -200,12 +227,7 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
         }
 
         if (vm.messages.isEmpty()) {
-            Text(
-                "Напиши сообщение или /help",
-                color = ColMuted,
-                fontSize = 15.sp,
-                modifier = Modifier.align(Alignment.Center),
-            )
+            EmptyChat(Modifier.align(Alignment.Center))
         }
 
         // верх: затемнение + статус-бар + пузыри шапки. onSizeChanged стоит раньше паддингов,
@@ -264,9 +286,66 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
             enter = fadeIn(tween(160)) + expandVertically(tween(260), expandFrom = Alignment.Top),
             exit = fadeOut(tween(140)) + shrinkVertically(tween(200), shrinkTowards = Alignment.Top),
         ) {
-            ModelList(vm) { modelOpen = false }
+            ModelList(
+                vm = vm,
+                onServer = { withTermux { if (vm.serverError != null) vm.startOllama() else vm.stopOllama() } },
+                onPicked = { modelOpen = false },
+            )
         }
     }
+    }
+}
+
+// ---------- пустой чат ----------
+
+private val GREETINGS = listOf(
+    "О чём подумаем?",
+    "С чего начнём?",
+    "Что обсудим сегодня?",
+    "Чем займёмся?",
+    "Что у тебя на уме?",
+    "Над чем поработаем?",
+    "Какой вопрос сегодня?",
+)
+
+/** Приветствие вместо подсказки. Фраза выбирается заново каждый раз, когда чат становится пустым. */
+@Composable
+private fun EmptyChat(modifier: Modifier = Modifier) {
+    val greeting = remember { GREETINGS.random() }
+    Row(
+        modifier.padding(horizontal = 32.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Sparkle()
+        Spacer(Modifier.width(14.dp))
+        Text(
+            greeting,
+            color = ColText,
+            fontSize = 26.sp,
+            fontWeight = FontWeight.Medium,
+            lineHeight = 32.sp,
+        )
+    }
+}
+
+/** Восьмилучевая звёздочка, приглушённая. */
+@Composable
+private fun Sparkle() {
+    Canvas(Modifier.size(28.dp)) {
+        val c = Offset(size.width / 2f, size.height / 2f)
+        val sw = 2.5.dp.toPx()
+        for (i in 0 until 8) {
+            val a = Math.toRadians(i * 45.0)
+            val dx = cos(a).toFloat()
+            val dy = sin(a).toFloat()
+            drawLine(
+                ColMuted,
+                Offset(c.x + dx * size.width * 0.18f, c.y + dy * size.height * 0.18f),
+                Offset(c.x + dx * size.width * 0.5f, c.y + dy * size.height * 0.5f),
+                sw,
+                StrokeCap.Round,
+            )
+        }
     }
 }
 
@@ -325,14 +404,20 @@ private fun MenuButton(onClick: () -> Unit) {
     }
 }
 
-/** Панель со списком моделей: стекло, строки со скруглённой подсветкой выбранной. */
+/**
+ * Панель со списком моделей: стекло, строки со скруглённой подсветкой выбранной.
+ * Внизу управление сервером: нет связи, значит «Запустить», есть, значит «Остановить».
+ * Для удалённого сервера (адрес не 127.0.0.1) кнопки нет, мы им не управляем.
+ */
 @Composable
-private fun ModelList(vm: ChatViewModel, onPicked: () -> Unit) {
+private fun ModelList(vm: ChatViewModel, onServer: () -> Unit, onPicked: () -> Unit) {
+    val offline = vm.serverError != null
+    val working = vm.launching || vm.stopping
     Column(
         Modifier
             .fillMaxWidth()
             .glass(RoundedCornerShape(22.dp), strong = true)
-            .heightIn(max = 320.dp)
+            .heightIn(max = 380.dp)
             .verticalScroll(rememberScrollState())
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -350,6 +435,32 @@ private fun ModelList(vm: ChatViewModel, onPicked: () -> Unit) {
                     vm.selectModel(name)
                     onPicked()
                 }
+            }
+        }
+        if (vm.isLocalHost) {
+            Spacer(Modifier.height(6.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(ColUser.copy(alpha = 0.7f))
+                    .clickable(enabled = !working, onClick = onServer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    when {
+                        vm.launching -> "Запускаю…"
+                        vm.stopping -> "Останавливаю…"
+                        offline -> "Запустить Ollama"
+                        else -> "Остановить Ollama"
+                    },
+                    color = if (working) ColMuted else ColText,
+                    fontSize = 15.sp,
+                )
+            }
+            vm.launchNote?.let {
+                Text(it, color = ColMuted, fontSize = 13.sp, modifier = Modifier.padding(start = 12.dp, top = 6.dp, end = 12.dp, bottom = 4.dp))
             }
         }
     }
@@ -400,7 +511,7 @@ private fun MessageItem(m: Msg) {
                     .background(ColUser)
                     .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
-                SelectionContainer { Markdown(m.content) }
+                SelectionContainer { Markdown(m.content, codeBg = ColCodeBgUser) }
             }
         }
         Role.ASSISTANT -> AssistantMessage(m)
@@ -601,7 +712,7 @@ private fun InputBar(busy: Boolean, onSend: (String) -> Unit, onStop: () -> Unit
             Modifier.weight(1f).heightIn(min = 44.dp).padding(vertical = 10.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
-            if (text.isEmpty()) Text("Сообщение или /help", color = ColMuted, fontSize = 16.sp)
+            if (text.isEmpty()) Text("Как я могу вам помочь сегодня?", color = ColMuted, fontSize = 16.sp)
             BasicTextField(
                 value = text,
                 onValueChange = { text = it },
