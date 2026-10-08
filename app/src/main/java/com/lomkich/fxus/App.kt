@@ -128,25 +128,30 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                 .clip(RoundedCornerShape((24f * progress.value).dp))
                 .background(ColBg)
         ) {
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .imePadding()
-            ) {
-                when (screen) {
-                    Screen.CHAT -> ChatScreen(vm, onMenu = { drawerOpen = true })
-                    Screen.CHATS -> ChatsScreen(
-                        vm,
-                        onOpen = { id ->
-                            vm.openChat(id)
-                            screen = Screen.CHAT
-                        },
-                        onBack = { screen = Screen.CHAT },
-                    )
-                    Screen.ARTIFACTS -> ComingSoon("Артефакты") { screen = Screen.CHAT }
-                    Screen.SETTINGS -> SettingsScreen(vm) { screen = Screen.CHAT }
+            if (screen == Screen.CHAT) {
+                // чат сам рисует контент под системными панелями и сам обрабатывает отступы
+                ChatScreen(vm, onMenu = { drawerOpen = true })
+            } else {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .imePadding()
+                ) {
+                    when (screen) {
+                        Screen.CHATS -> ChatsScreen(
+                            vm,
+                            onOpen = { id ->
+                                vm.openChat(id)
+                                screen = Screen.CHAT
+                            },
+                            onBack = { screen = Screen.CHAT },
+                        )
+                        Screen.ARTIFACTS -> ComingSoon("Артефакты") { screen = Screen.CHAT }
+                        Screen.SETTINGS -> SettingsScreen(vm) { screen = Screen.CHAT }
+                        Screen.CHAT -> Unit
+                    }
                 }
             }
             // Пока меню открыто: тап по сдвинутому экрану закрывает, свайп влево тоже.

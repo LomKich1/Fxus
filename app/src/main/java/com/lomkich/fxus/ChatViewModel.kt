@@ -10,15 +10,19 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
-private const val DEFAULT_HOST = "http://127.0.0.1:11434"
+const val DEFAULT_HOST = "http://127.0.0.1:11434"
 
 private const val HELP = """Команды (как в ollama):
 /clear — очистить контекст
@@ -28,34 +32,49 @@ private const val HELP = """Команды (как в ollama):
 /set parameter <имя> <значение>
 /show — текущие настройки
 /load <модель> — сменить модель (контекст сбросится)
-Сверх ollama:
-/models — список моделей на сервере
-/host [url] — адрес сервера"""
+Модель и адрес сервера — в шапке и в настройках."""
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = app.getSharedPreferences("fxus", Context.MODE_PRIVATE)
     private val client = OllamaClient()
+    private val store = ChatStore(app)
+    private val saveLock = Mutex()
 
     val messages = mutableStateListOf<Msg>()
     var busy by mutableStateOf(false)
         private set
     var model by mutableStateOf(prefs.getString("model", "").orEmpty())
         private set
+    var models by mutableStateOf<List<String>>(emptyList())
+        private set
+    var serverError by mutableStateOf<String?>(null)
+        private set
+    var nick by mutableStateOf(prefs.getString("nick", "").orEmpty())
+        private set
+    var host by mutableStateOf(prefs.getString("host", DEFAULT_HOST).orEmpty().ifBlank { DEFAULT_HOST })
+        private set
+    var systemPrompt by mutableStateOf(prefs.getString("system", "").orEmpty())
+        private set
+    /** Список сохранённых чатов, свежие сверху. */
+    var chats by mutableStateOf<List<ChatMeta>>(emptyList())
+        private set
+    /** null = новый чат, который ещё ни разу не сохранялся. */
+    var currentId by mutableStateOf<String?>(null)
+        private set
     /** Растёт на каждый токен, по нему экран решает, пора ли докрутить вниз. */
     var tick by mutableIntStateOf(0)
         private set
 
-    private var host = prefs.getString("host", DEFAULT_HOST).orEmpty().ifBlank { DEFAULT_HOST }
     private var think: Any? = null          // null = не слать поле think вообще
-    private var system: String? = null
     private val options = JSONObject()
     private var job: Job? = null
     private var stopped = false
     private var nextId = 0L
 
     init {
-        viewModelScope.launch { loadModels(print = false) }
+        refreshModels()
+        refreshChats()
     }
 
     // ---------- ввод ----------
@@ -71,14 +90,100 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         job?.cancel()
     }
 
+    fun newChat() {
+        stop()
+        messages.clear()
+        currentId = null
+    }
+
+    fun saveSettings(newNick: String, newHost: String, newSystem: String) {
+        nick = newNick.trim()
+        host = newHost.trim().trimEnd('/').ifBlank { DEFAULT_HOST }
+        systemPrompt = newSystem.trim()
+        prefs.edit()
+            .putString("nick", nick)
+            .putString("host", host)
+            .putString("system", systemPrompt)
+            .apply()
+        refreshModels()
+    }
+
+    // ---------- история чатов ----------
+
+    fun refreshChats() {
+        viewModelScope.launch { chats = withContext(Dispatchers.IO) { store.listMeta() } }
+    }
+
+    fun openChat(id: String) {
+        stop()
+        viewModelScope.launch {
+            val loaded = withContext(Dispatchers.IO) { store.load(id) }
+            messages.clear()
+            messages.addAll(loaded.map { it.copy(id = nextId++) })
+            currentId = id
+            tick++
+        }
+    }
+
+    fun renameChat(id: String, title: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { store.rename(id, title) }
+            refreshChats()
+        }
+    }
+
+    fun deleteChat(id: String) {
+        if (id == currentId) newChat()
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { store.delete(id) }
+            refreshChats()
+        }
+    }
+
+    suspend fun searchChats(query: String): Set<String> =
+        withContext(Dispatchers.IO) { store.search(query) }
+
+    /**
+     * Сохраняет текущий разговор. Системные заметки интерфейса не сохраняются.
+     * Запись идёт в одной очереди (Mutex), чтобы старый снимок не затёр новый.
+     */
+    private fun persist() {
+        val snapshot = messages.filter {
+            (it.role == Role.USER || it.role == Role.ASSISTANT) && (it.content.isNotEmpty() || it.thinking.isNotEmpty())
+        }
+        if (snapshot.isEmpty()) return
+        val id = currentId ?: System.currentTimeMillis().toString(36).also { currentId = it }
+        val title = autoTitle(snapshot.firstOrNull { it.role == Role.USER }?.content.orEmpty())
+        viewModelScope.launch {
+            saveLock.withLock { withContext(Dispatchers.IO) { store.save(id, title, snapshot) } }
+            chats = withContext(Dispatchers.IO) { store.listMeta() }
+        }
+    }
+
+    // первые 4 слова первого сообщения, не длиннее 30 символов
+    private fun autoTitle(first: String): String {
+        val words = first.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.take(4).joinToString(" ")
+        return words.take(30).trim().ifBlank { "Новый чат" }
+    }
+
+    fun refreshModels() {
+        viewModelScope.launch { loadModels() }
+    }
+
+    fun selectModel(name: String) {
+        model = name
+        prefs.edit().putString("model", name).apply()
+    }
+
     // ---------- чат ----------
 
     private fun chat(text: String) {
         add(Role.USER, text)
         if (model.isBlank()) {
-            sys("Модель не выбрана. /models, потом /load <имя>.")
+            sys("Модель не выбрана. Выбери её в шапке.")
             return
         }
+        persist()
         val body = buildBody()
         val replyId = add(Role.ASSISTANT, streaming = true)
         busy = true
@@ -86,11 +191,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         job = viewModelScope.launch {
             val content = StringBuilder()
             val thinking = StringBuilder()
+            var thinkStart = 0L
+            var thinkMs = 0L
             try {
                 client.chat(host, body).collect { c ->
+                    val now = System.currentTimeMillis()
+                    if (thinkStart == 0L && c.thinking.isNotEmpty()) thinkStart = now
+                    if (thinkStart != 0L && thinkMs == 0L && c.content.isNotEmpty()) thinkMs = now - thinkStart
                     content.append(c.content)
                     thinking.append(c.thinking)
-                    update(replyId) { it.copy(content = content.toString(), thinking = thinking.toString()) }
+                    update(replyId) {
+                        it.copy(
+                            content = content.toString(),
+                            thinking = thinking.toString(),
+                            thinkStart = thinkStart,
+                            thinkMs = thinkMs,
+                        )
+                    }
                     tick++
                 }
                 if (content.isEmpty() && thinking.isNotEmpty()) {
@@ -103,20 +220,26 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 if (!stopped) sys(describe(e))
             } finally {
+                if (thinkStart != 0L && thinkMs == 0L) thinkMs = System.currentTimeMillis() - thinkStart
                 val i = messages.indexOfFirst { it.id == replyId }
                 if (i >= 0) {
                     val m = messages[i]
                     if (m.content.isEmpty() && m.thinking.isEmpty()) messages.removeAt(i)
-                    else messages[i] = m.copy(streaming = false)
+                    else messages[i] = m.copy(streaming = false, thinkMs = thinkMs)
                 }
                 busy = false
+                persist()
             }
         }
     }
 
     private fun buildBody(): JSONObject {
         val arr = JSONArray()
-        system?.let { arr.put(JSONObject().put("role", "system").put("content", it)) }
+        val sysText = listOfNotNull(
+            systemPrompt.takeIf { it.isNotBlank() },
+            nick.takeIf { it.isNotBlank() }?.let { "Пользователя зовут $it." },
+        ).joinToString("\n")
+        if (sysText.isNotBlank()) arr.put(JSONObject().put("role", "system").put("content", sysText))
         messages
             .filter { (it.role == Role.USER || it.role == Role.ASSISTANT) && it.content.isNotBlank() }
             .forEach {
@@ -138,36 +261,25 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun command(line: String) {
         val parts = line.removePrefix("/").trim().split(Regex("\\s+"), limit = 3)
-        val rest = parts.drop(1).joinToString(" ")
         when (val cmd = parts[0].lowercase()) {
             "clear" -> {
-                messages.clear()
-                sys("Контекст очищен.")
+                val hadChat = currentId != null
+                newChat()
+                sys(if (hadChat) "Контекст очищен. Прошлый чат остался в списке." else "Контекст очищен.")
             }
             "set" -> set(parts.getOrNull(1)?.lowercase(), parts.getOrNull(2))
             "show" -> sys(
-                "model: ${model.ifBlank { "—" }}\nhost: $host\nthink: ${think ?: "по умолчанию"}\n" +
-                    "system: ${system ?: "—"}\noptions: $options"
+                "model: ${model.ifBlank { "—" }}\nhost: $host\nnick: ${nick.ifBlank { "—" }}\nthink: ${think ?: "по умолчанию"}\n" +
+                    "system: ${systemPrompt.ifBlank { "—" }}\noptions: $options"
             )
             "load" -> {
                 val name = parts.getOrNull(1)
                 if (name.isNullOrBlank()) {
                     sys("Использование: /load <модель>")
                 } else {
-                    setModel(name)
-                    messages.clear()
+                    selectModel(name)
+                    newChat()
                     sys("Модель: $name. Контекст сброшен.")
-                }
-            }
-            "models" -> viewModelScope.launch { loadModels(print = true) }
-            "host" -> {
-                if (rest.isBlank()) {
-                    sys("host: $host")
-                } else {
-                    host = rest.trim().trimEnd('/')
-                    prefs.edit().putString("host", host).apply()
-                    sys("host: $host")
-                    viewModelScope.launch { loadModels(print = false) }
                 }
             }
             "help", "?" -> sys(HELP)
@@ -195,8 +307,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 if (arg.isNullOrBlank()) {
                     sys("Использование: /set system <текст>")
                 } else {
-                    system = arg
-                    sys("System-промпт задан.")
+                    systemPrompt = arg.trim()
+                    prefs.edit().putString("system", systemPrompt).apply()
+                    sys("System-промпт задан (он же в настройках).")
                 }
             }
             "parameter" -> {
@@ -217,29 +330,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- сервер ----------
 
-    private suspend fun loadModels(print: Boolean) {
+    private suspend fun loadModels() {
         try {
             val list = client.tags(host)
-            if (list.isEmpty()) {
-                sys("На сервере нет моделей. В Termux: ollama pull <имя>")
-                return
-            }
-            if (model.isBlank()) setModel(list.first())
-            else if (model !in list && !print) sys("Модели $model нет на сервере. /models покажет список.")
-            if (print) sys(list.joinToString("\n") { (if (it == model) "▸ " else "  ") + it })
+            models = list
+            serverError = null
+            if (model.isBlank() && list.isNotEmpty()) selectModel(list.first())
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            sys(describe(e))
+            models = emptyList()
+            serverError = describe(e)
         }
-    }
-
-    private fun setModel(name: String) {
-        model = name
-        prefs.edit().putString("model", name).apply()
     }
 
     private fun describe(e: Exception): String = when (e) {
         is ConnectException, is UnknownHostException, is SocketTimeoutException ->
-            "Нет связи с $host. Запущен ли ollama serve в Termux?"
+            "Нет связи с $host. Запусти ollama serve в Termux."
         else -> "Ошибка: ${e.message}"
     }
 
