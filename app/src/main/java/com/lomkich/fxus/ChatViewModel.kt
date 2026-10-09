@@ -62,7 +62,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Через сколько минут простоя Termux гасит сервер (0 = не гасить). Уходит в скрипт запуска. */
     var idleMinutes by mutableStateOf(prefs.getInt("idle_min", 10))
         private set
-        private set
     /** Список сохранённых чатов, свежие сверху. */
     var chats by mutableStateOf<List<ChatMeta>>(emptyList())
         private set
