@@ -4,6 +4,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Ключ подписи приходит из окружения (GitHub Secrets, см. .github/workflows/build.yml).
+// Без него (локальная сборка, форк без секретов) релиз подписывается debug-ключом, чтобы сборка не падала.
+val keystorePath: String? = System.getenv("KEYSTORE_PATH")
+val hasKeystore = !keystorePath.isNullOrBlank() && File(keystorePath).exists()
+
 android {
     namespace = "com.lomkich.fxus"
     compileSdk = 35
@@ -12,12 +17,33 @@ android {
         applicationId = "com.lomkich.fxus"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        // номер запуска CI растёт сам, поэтому каждая сборка «новее» предыдущей и ставится поверх
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "0.1"
     }
 
+    signingConfigs {
+        if (hasKeystore) {
+            create("release") {
+                storeFile = file(keystorePath!!)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
-        release { isMinifyEnabled = false }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = if (hasKeystore) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+        }
+    }
+    // lintVital на релизе тормозит CI и может уронить сборку из-за мелочи, нам он не нужен
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

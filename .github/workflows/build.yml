@@ -17,9 +17,28 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.10.2
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/fxus.jks"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/fxus.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Секрет KEYSTORE_BASE64 не задан: APK подпишется debug-ключом и не встанет поверх установленного"
+          fi
+      - name: Build release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle assembleRelease --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: fxus-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: fxus-release
+          path: app/build/outputs/apk/release/app-release.apk
+      # карта имён R8: без неё стектрейс из релиза не расшифровать
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fxus-mapping
+          path: app/build/outputs/mapping/release/mapping.txt

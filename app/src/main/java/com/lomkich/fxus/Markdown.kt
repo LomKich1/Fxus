@@ -28,6 +28,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -58,11 +62,29 @@ private data class Heading(val level: Int, val text: String) : Block
 private data class Item(val marker: String, val level: Int, val text: String) : Block
 private data class Quote(val text: String) : Block
 private data class Code(val lang: String, val code: String) : Block
+private data class Table(val header: List<String>, val aligns: List<TextAlign>, val rows: List<List<String>>) : Block
 private object Rule : Block
 
 private val HEADING = Regex("^(#{1,6})\\s+(.+)$")
 private val LIST = Regex("^(\\s*)([-*+]|\\d+[.)])\\s+(.*)$")
 private val RULE = Regex("^(-{3,}|\\*{3,}|_{3,})$")
+
+// Таблица: строка с «|», под ней строка-разделитель из ---, дальше строки с «|».
+private val TABLE_SEP = Regex("^\\s*\\|?\\s*:?-+:?\\s*(\\|\\s*:?-+:?\\s*)*\\|?\\s*$")
+
+private fun isTableStart(lines: List<String>, i: Int): Boolean =
+    i + 1 < lines.size && lines[i].contains('|') && lines[i + 1].contains('|') &&
+        lines[i + 1].contains('-') && TABLE_SEP.matches(lines[i + 1])
+
+/** Разбить строку таблицы на ячейки. \| внутри ячейки остаётся символом |, <br> становится переносом строки. */
+private fun splitRow(line: String): List<String> {
+    var t = line.trim()
+    if (t.startsWith("|")) t = t.drop(1)
+    if (t.endsWith("|") && !t.endsWith("\\|")) t = t.dropLast(1)
+    return t.replace("\\|", "\u0000").split("|").map {
+        it.replace("\u0000", "|").trim().replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
+    }
+}
 
 private fun parseMarkdown(src: String): List<Block> {
     val out = ArrayList<Block>()
@@ -101,6 +123,33 @@ private fun parseMarkdown(src: String): List<Block> {
             val h = HEADING.matchEntire(t)
             val li = LIST.matchEntire(line)
             when {
+                isTableStart(lines, i) -> {
+                    flush()
+                    val header = splitRow(line)
+                    val aligns = splitRow(lines[i + 1]).map {
+                        when {
+                            it.startsWith(":") && it.endsWith(":") -> TextAlign.Center
+                            it.endsWith(":") -> TextAlign.End
+                            else -> TextAlign.Start
+                        }
+                    }
+                    var j = i + 2
+                    val rows = ArrayList<List<String>>()
+                    while (j < lines.size && lines[j].isNotBlank() && lines[j].contains('|')) {
+                        rows.add(splitRow(lines[j]))
+                        j++
+                    }
+                    // строки подгоняем под число столбцов шапки: при стриме последняя может быть недописана
+                    val n = header.size
+                    out.add(
+                        Table(
+                            header,
+                            List(n) { aligns.getOrElse(it) { TextAlign.Start } },
+                            rows.map { r -> List(n) { r.getOrElse(it) { "" } } },
+                        )
+                    )
+                    i = j - 1 // общий i++ внизу цикла встанет на первую строку после таблицы
+                }
                 h != null -> {
                     flush()
                     out.add(Heading(h.groupValues[1].length, h.groupValues[2]))
@@ -273,6 +322,7 @@ private fun RenderBlock(b: Block) {
         }
         Rule -> Box(Modifier.fillMaxWidth().height(1.dp).background(ColUser))
         is Code -> CodeBlock(b)
+        is Table -> TableView(b)
     }
 }
 
@@ -282,6 +332,7 @@ private fun MdText(
     size: TextUnit,
     color: Color = ColText,
     weight: FontWeight? = null,
+    align: TextAlign? = null,
     modifier: Modifier = Modifier,
 ) {
     val styled = remember(text) { buildAnnotatedString { md(text) } }
@@ -294,6 +345,7 @@ private fun MdText(
         fontSize = size,
         lineHeight = size * 1.5f,
         fontWeight = weight,
+        textAlign = align,
         onTextLayout = { layout[0] = it },
         modifier = modifier.drawBehind {
             val l = layout[0] ?: return@drawBehind
@@ -331,6 +383,80 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCodeBackgrounds
             val top = layout.getLineTop(line) + padY
             val bottom = layout.getLineBottom(line) - padY
             drawRoundRect(color, Offset(left, top), Size(right - left, bottom - top), radius)
+        }
+    }
+}
+
+/** Позиции линий сетки; заполняются при измерении, читаются при рисовании (оно идёт после layout). */
+private class Grid {
+    var xs = IntArray(0)
+    var ys = IntArray(0)
+}
+
+@Composable
+private fun TableCell(text: String, align: TextAlign, header: Boolean) {
+    MdText(
+        text,
+        14.sp,
+        weight = if (header) FontWeight.SemiBold else null,
+        align = align,
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+    )
+}
+
+/**
+ * Таблица: серое окно со скруглением, шапка чуть светлее, тонкая сетка.
+ * Ширина столбца по самой длинной ячейке (но не больше 260dp, дальше перенос строк),
+ * вся таблица прокручивается вбок, если не влезла.
+ */
+@Composable
+private fun TableView(t: Table) {
+    val grid = remember { Grid() }
+    val cols = t.header.size
+    val lineColor = ColMuted.copy(alpha = 0.28f)
+    val maxColPx = with(LocalDensity.current) { 260.dp.roundToPx() }
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(ColCode)
+            .horizontalScroll(rememberScrollState())
+    ) {
+        Layout(
+            content = {
+                t.header.forEachIndexed { c, cell -> TableCell(cell, t.aligns[c], header = true) }
+                t.rows.forEach { row -> for (c in 0 until cols) TableCell(row[c], t.aligns[c], header = false) }
+            },
+            modifier = Modifier.drawBehind {
+                val xs = grid.xs
+                val ys = grid.ys
+                if (ys.size > 1 && xs.size > 1) {
+                    drawRect(ColCodeBg, Offset.Zero, Size(this.size.width, ys[1].toFloat()))
+                    val w = 1.dp.toPx()
+                    for (k in 1 until ys.size - 1) drawLine(lineColor, Offset(0f, ys[k].toFloat()), Offset(this.size.width, ys[k].toFloat()), w)
+                    for (k in 1 until xs.size - 1) drawLine(lineColor, Offset(xs[k].toFloat(), 0f), Offset(xs[k].toFloat(), this.size.height), w)
+                }
+            },
+        ) { measurables, _ ->
+            val rowCount = measurables.size / cols
+            val widths = IntArray(cols)
+            for (r in 0 until rowCount) for (c in 0 until cols) {
+                val w = measurables[r * cols + c].maxIntrinsicWidth(Int.MAX_VALUE)
+                widths[c] = maxOf(widths[c], minOf(w, maxColPx))
+            }
+            val placeables = measurables.mapIndexed { idx, m ->
+                m.measure(Constraints(minWidth = widths[idx % cols], maxWidth = widths[idx % cols]))
+            }
+            val heights = IntArray(rowCount)
+            placeables.forEachIndexed { idx, p -> heights[idx / cols] = maxOf(heights[idx / cols], p.height) }
+            val xs = IntArray(cols + 1)
+            for (c in 0 until cols) xs[c + 1] = xs[c] + widths[c]
+            val ys = IntArray(rowCount + 1)
+            for (r in 0 until rowCount) ys[r + 1] = ys[r] + heights[r]
+            grid.xs = xs
+            grid.ys = ys
+            layout(xs[cols], ys[rowCount]) {
+                placeables.forEachIndexed { idx, p -> p.placeRelative(xs[idx % cols], ys[idx / cols]) }
+            }
         }
     }
 }
