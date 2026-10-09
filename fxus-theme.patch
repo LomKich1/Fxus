@@ -1,0 +1,613 @@
+diff --git a/app/src/main/java/com/lomkich/fxus/ChatScreen.kt b/app/src/main/java/com/lomkich/fxus/ChatScreen.kt
+index e976590..9fec073 100644
+--- a/app/src/main/java/com/lomkich/fxus/ChatScreen.kt
++++ b/app/src/main/java/com/lomkich/fxus/ChatScreen.kt
+@@ -101,10 +101,6 @@ import dev.chrisbanes.haze.hazeSource
+ import kotlinx.coroutines.delay
+ import kotlinx.coroutines.flow.collectLatest
+ 
+-// Затемнение под системными панелями и вокруг пузырей: плотное у края экрана, к контенту сходит в ноль.
+-private val ScrimTop = Brush.verticalGradient(listOf(ColBg.copy(alpha = 0.95f), Color.Transparent))
+-private val ScrimBottom = Brush.verticalGradient(listOf(Color.Transparent, ColBg.copy(alpha = 0.95f)))
+-
+ /**
+  * Список сообщений занимает весь экран и уходит под шапку, поле ввода и системные панели.
+  * Шапка и ввод плавают поверх (пузыри), а их высоту список получает как contentPadding,
+@@ -115,6 +111,10 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
+     val listState = rememberLazyListState()
+     val hazeState = remember { HazeState() }
+     val density = LocalDensity.current
++    // Затемнение под системными панелями и вокруг пузырей: плотное у края экрана, к контенту сходит в ноль.
++    val bgColor = ColBg
++    val scrimTop = remember(bgColor) { Brush.verticalGradient(listOf(bgColor.copy(alpha = 0.95f), Color.Transparent)) }
++    val scrimBottom = remember(bgColor) { Brush.verticalGradient(listOf(Color.Transparent, bgColor.copy(alpha = 0.95f))) }
+     var topPx by remember { mutableIntStateOf(0) }
+     var bottomPx by remember { mutableIntStateOf(0) }
+     var modelOpen by remember { mutableStateOf(false) }
+@@ -235,7 +235,7 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
+                 .align(Alignment.TopCenter)
+                 .fillMaxWidth()
+                 .onSizeChanged { topPx = it.height }
+-                .background(ScrimTop)
++                .background(scrimTop)
+                 .statusBarsPadding()
+                 .padding(bottom = 12.dp)
+         ) {
+@@ -259,7 +259,7 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
+                 .align(Alignment.BottomCenter)
+                 .fillMaxWidth()
+                 .onSizeChanged { bottomPx = it.height }
+-                .background(ScrimBottom)
++                .background(scrimBottom)
+                 .padding(top = 12.dp)
+                 .navigationBarsPadding()
+         ) {
+@@ -329,6 +329,7 @@ private fun EmptyChat(modifier: Modifier = Modifier) {
+ /** Восьмилучевая звёздочка, приглушённая. */
+ @Composable
+ private fun Sparkle() {
++    val ray = ColMuted
+     Canvas(Modifier.size(28.dp)) {
+         val c = Offset(size.width / 2f, size.height / 2f)
+         val sw = 2.5.dp.toPx()
+@@ -337,7 +338,7 @@ private fun Sparkle() {
+             val dx = cos(a).toFloat()
+             val dy = sin(a).toFloat()
+             drawLine(
+-                ColMuted,
++                ray,
+                 Offset(c.x + dx * size.width * 0.18f, c.y + dy * size.height * 0.18f),
+                 Offset(c.x + dx * size.width * 0.5f, c.y + dy * size.height * 0.5f),
+                 sw,
+@@ -387,11 +388,12 @@ private fun MenuButton(onClick: () -> Unit) {
+         Modifier.size(44.dp).glass(CircleShape).clickable(onClick = onClick),
+         contentAlignment = Alignment.Center,
+     ) {
++        val bar = ColText
+         Canvas(Modifier.size(22.dp)) {
+             val stroke = 2.dp.toPx()
+             listOf(0.2f, 0.5f, 0.8f).forEach { y ->
+                 drawLine(
+-                    color = ColText,
++                    color = bar,
+                     start = Offset(0f, size.height * y),
+                     end = Offset(size.width, size.height * y),
+                     strokeWidth = stroke,
+@@ -487,10 +489,11 @@ private fun ModelRow(name: String, selected: Boolean, onClick: () -> Unit) {
+         )
+         if (selected) {
+             Spacer(Modifier.width(8.dp))
++            val tick = ColText
+             Canvas(Modifier.size(16.dp)) {
+                 val sw = 2.dp.toPx()
+-                drawLine(ColText, Offset(size.width * 0.1f, size.height * 0.55f), Offset(size.width * 0.4f, size.height * 0.85f), sw, StrokeCap.Round)
+-                drawLine(ColText, Offset(size.width * 0.4f, size.height * 0.85f), Offset(size.width * 0.9f, size.height * 0.2f), sw, StrokeCap.Round)
++                drawLine(tick, Offset(size.width * 0.1f, size.height * 0.55f), Offset(size.width * 0.4f, size.height * 0.85f), sw, StrokeCap.Round)
++                drawLine(tick, Offset(size.width * 0.4f, size.height * 0.85f), Offset(size.width * 0.9f, size.height * 0.2f), sw, StrokeCap.Round)
+             }
+         }
+     }
+@@ -545,10 +548,11 @@ private fun Dots(label: String, color: Color, fontSize: TextUnit, modifier: Modi
+ @Composable
+ private fun Chevron(open: Boolean) {
+     val rot by animateFloatAsState(if (open) 180f else 0f, tween(200), label = "chevron")
++    val arrow = ColMuted
+     Canvas(Modifier.size(12.dp).graphicsLayer { rotationZ = rot }) {
+         val sw = 1.5.dp.toPx()
+-        drawLine(ColMuted, Offset(size.width * 0.15f, size.height * 0.35f), Offset(size.width / 2f, size.height * 0.7f), sw, StrokeCap.Round)
+-        drawLine(ColMuted, Offset(size.width * 0.85f, size.height * 0.35f), Offset(size.width / 2f, size.height * 0.7f), sw, StrokeCap.Round)
++        drawLine(arrow, Offset(size.width * 0.15f, size.height * 0.35f), Offset(size.width / 2f, size.height * 0.7f), sw, StrokeCap.Round)
++        drawLine(arrow, Offset(size.width * 0.85f, size.height * 0.35f), Offset(size.width / 2f, size.height * 0.7f), sw, StrokeCap.Round)
+     }
+ }
+ 
+@@ -779,7 +783,7 @@ private fun ActionButton(action: Action, onClick: () -> Unit) {
+                 .background(if (isMic) ColUser else ColAccent),
+             contentAlignment = Alignment.Center,
+         ) {
+-            ActionIcon(shown, if (isMic) ColText else ColBg)
++            ActionIcon(shown, if (isMic) ColText else ColOnAccent)
+         }
+     }
+ }
+diff --git a/app/src/main/java/com/lomkich/fxus/ChatViewModel.kt b/app/src/main/java/com/lomkich/fxus/ChatViewModel.kt
+index 9f08fc6..8fc96c0 100644
+--- a/app/src/main/java/com/lomkich/fxus/ChatViewModel.kt
++++ b/app/src/main/java/com/lomkich/fxus/ChatViewModel.kt
+@@ -62,6 +62,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
+     /** Через сколько минут простоя Termux гасит сервер (0 = не гасить). Уходит в скрипт запуска. */
+     var idleMinutes by mutableStateOf(prefs.getInt("idle_min", 10))
+         private set
++    /** Тема оформления: авто (как в системе), светлая или тёмная. Применяется сразу, без «Сохранить». */
++    var themeMode by mutableStateOf(
++        runCatching { ThemeMode.valueOf(prefs.getString("theme", "").orEmpty()) }.getOrDefault(ThemeMode.AUTO)
++    )
++        private set
+     /** Список сохранённых чатов, свежие сверху. */
+     var chats by mutableStateOf<List<ChatMeta>>(emptyList())
+         private set
+@@ -132,6 +137,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
+         refreshModels()
+     }
+ 
++    fun setTheme(mode: ThemeMode) {
++        themeMode = mode
++        prefs.edit().putString("theme", mode.name).apply()
++    }
++
+     // ---------- история чатов ----------
+ 
+     fun refreshChats() {
+diff --git a/app/src/main/java/com/lomkich/fxus/Drawer.kt b/app/src/main/java/com/lomkich/fxus/Drawer.kt
+index 9b2388c..a753b1a 100644
+--- a/app/src/main/java/com/lomkich/fxus/Drawer.kt
++++ b/app/src/main/java/com/lomkich/fxus/Drawer.kt
+@@ -93,7 +93,7 @@ fun DrawerContent(
+                     .padding(horizontal = 22.dp),
+                 contentAlignment = Alignment.Center,
+             ) {
+-                Text("+  Новый чат", color = ColBg, fontSize = 16.sp, fontWeight = FontWeight.Medium)
++                Text("+  Новый чат", color = ColOnAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+             }
+         }
+     }
+@@ -116,8 +116,8 @@ private fun DrawerItem(title: String, onClick: () -> Unit) {
+ /** С ником: первая буква в кружке. Без ника: силуэт «человек по плечи». */
+ @Composable
+ fun Avatar(nick: String, diameter: Dp, modifier: Modifier = Modifier) {
+-    val bg = Color(0xFF343A47)
+-    val fg = Color(0xFF9AA0B4)
++    val bg = ColUser
++    val fg = ColMuted
+     if (nick.isNotBlank()) {
+         Box(
+             Modifier.size(diameter).clip(CircleShape).then(modifier).background(bg),
+diff --git a/app/src/main/java/com/lomkich/fxus/Glass.kt b/app/src/main/java/com/lomkich/fxus/Glass.kt
+index 487ce8c..d3da2c9 100644
+--- a/app/src/main/java/com/lomkich/fxus/Glass.kt
++++ b/app/src/main/java/com/lomkich/fxus/Glass.kt
+@@ -24,6 +24,11 @@ val LocalHazeState = staticCompositionLocalOf<HazeState?> { null }
+ @Composable
+ fun Modifier.glass(shape: Shape, strong: Boolean = false): Modifier {
+     val haze = LocalHazeState.current
++    // цвета читаем здесь: внутри hazeEffect {} это уже не @Composable
++    val bgColor = ColBg
++    val fill = ColGlass
++    val fillBlur = ColGlassBlur
++    val edge = ColGlassEdge
+     // strong: плотнее заливка (выпадающий список поверх текста должен читаться)
+     val blurred = haze != null && Build.VERSION.SDK_INT >= 31 && !strong
+     var m = this.clip(shape)
+@@ -31,8 +36,8 @@ fun Modifier.glass(shape: Shape, strong: Boolean = false): Modifier {
+         m = m.hazeEffect(state = haze) {
+             blurRadius = 18.dp
+             noiseFactor = 0f
+-            backgroundColor = ColBg
++            backgroundColor = bgColor
+         }
+     }
+-    return m.background(if (blurred) ColGlassBlur else ColGlass).border(0.5.dp, ColGlassEdge, shape)
++    return m.background(if (blurred) fillBlur else fill).border(0.5.dp, edge, shape)
+ }
+diff --git a/app/src/main/java/com/lomkich/fxus/MainActivity.kt b/app/src/main/java/com/lomkich/fxus/MainActivity.kt
+index 45be755..2630b32 100644
+--- a/app/src/main/java/com/lomkich/fxus/MainActivity.kt
++++ b/app/src/main/java/com/lomkich/fxus/MainActivity.kt
+@@ -6,14 +6,27 @@ import androidx.activity.ComponentActivity
+ import androidx.activity.SystemBarStyle
+ import androidx.activity.compose.setContent
+ import androidx.activity.enableEdgeToEdge
++import androidx.compose.runtime.DisposableEffect
++import androidx.lifecycle.viewmodel.compose.viewModel
+ 
+ class MainActivity : ComponentActivity() {
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+-        enableEdgeToEdge(
+-            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+-            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+-        )
+-        setContent { FxusTheme { FxusApp() } }
++        setContent {
++            val vm: ChatViewModel = viewModel()
++            val mode = vm.themeMode
++            val dark = mode.resolveDark()
++
++            // иконки системных панелей подстраиваются под тему
++            DisposableEffect(dark) {
++                enableEdgeToEdge(
++                    statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark },
++                    navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark },
++                )
++                onDispose { }
++            }
++
++            FxusTheme(mode) { FxusApp(vm) }
++        }
+     }
+ }
+diff --git a/app/src/main/java/com/lomkich/fxus/Markdown.kt b/app/src/main/java/com/lomkich/fxus/Markdown.kt
+index 44786e3..792877a 100644
+--- a/app/src/main/java/com/lomkich/fxus/Markdown.kt
++++ b/app/src/main/java/com/lomkich/fxus/Markdown.kt
+@@ -200,9 +200,9 @@ private fun parseMarkdown(src: String): List<Block> {
+ private const val CODE_TAG = "code"
+ 
+ /** Цвет плашки инлайн-кода: у пользователя светлее, чтобы читалась на фоне его пузыря. */
+-private val LocalCodeBg = compositionLocalOf { ColCodeBg }
++private val LocalCodeBg = compositionLocalOf { Color.Unspecified } // реальный цвет задаёт Markdown()
+ 
+-private fun AnnotatedString.Builder.md(src: String) {
++private fun AnnotatedString.Builder.md(src: String, link: Color) {
+     var i = 0
+     while (i < src.length) {
+         val c = src[i]
+@@ -223,7 +223,7 @@ private fun AnnotatedString.Builder.md(src: String) {
+             val mark = src.substring(i, i + 2)
+             val end = src.indexOf(mark, i + 2)
+             if (end > i + 2) {
+-                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { md(src.substring(i + 2, end)) }
++                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { md(src.substring(i + 2, end), link) }
+                 i = end + 2
+             } else {
+                 append(mark)
+@@ -233,7 +233,7 @@ private fun AnnotatedString.Builder.md(src: String) {
+         } else if (src.startsWith("~~", i)) {
+             val end = src.indexOf("~~", i + 2)
+             if (end > i + 2) {
+-                withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { md(src.substring(i + 2, end)) }
++                withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { md(src.substring(i + 2, end), link) }
+                 i = end + 2
+             } else {
+                 append("~~")
+@@ -247,7 +247,7 @@ private fun AnnotatedString.Builder.md(src: String) {
+             val endOk = end > i + 1 && !src[end - 1].isWhitespace() &&
+                 (c == '*' || end + 1 >= src.length || !src[end + 1].isLetterOrDigit())
+             if (endOk) {
+-                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { md(src.substring(i + 1, end)) }
++                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { md(src.substring(i + 1, end), link) }
+                 i = end + 1
+                 continue
+             }
+@@ -256,8 +256,8 @@ private fun AnnotatedString.Builder.md(src: String) {
+             val close = if (mid > i) src.indexOf(')', mid + 2) else -1
+             if (mid > i && close > mid) {
+                 // ссылка пока только выглядит как ссылка, перехода по тапу нет
+-                withStyle(SpanStyle(textDecoration = TextDecoration.Underline, color = ColLink)) {
+-                    md(src.substring(i + 1, mid))
++                withStyle(SpanStyle(textDecoration = TextDecoration.Underline, color = link)) {
++                    md(src.substring(i + 1, mid), link)
+                 }
+                 i = close + 1
+                 continue
+@@ -335,7 +335,8 @@ private fun MdText(
+     align: TextAlign? = null,
+     modifier: Modifier = Modifier,
+ ) {
+-    val styled = remember(text) { buildAnnotatedString { md(text) } }
++    val link = ColLink
++    val styled = remember(text, link) { buildAnnotatedString { md(text, link) } }
+     val codeBg = LocalCodeBg.current
+     // раскладку держим в обычном массиве, не в state: рисование идёт после layout в том же кадре
+     val layout = remember { arrayOfNulls<TextLayoutResult>(1) }
+@@ -414,6 +415,7 @@ private fun TableView(t: Table) {
+     val grid = remember { Grid() }
+     val cols = t.header.size
+     val lineColor = ColMuted.copy(alpha = 0.28f)
++    val headerBg = ColCodeBg
+     val maxColPx = with(LocalDensity.current) { 260.dp.roundToPx() }
+     Box(
+         Modifier
+@@ -430,7 +432,7 @@ private fun TableView(t: Table) {
+                 val xs = grid.xs
+                 val ys = grid.ys
+                 if (ys.size > 1 && xs.size > 1) {
+-                    drawRect(ColCodeBg, Offset.Zero, Size(this.size.width, ys[1].toFloat()))
++                    drawRect(headerBg, Offset.Zero, Size(this.size.width, ys[1].toFloat()))
+                     val w = 1.dp.toPx()
+                     for (k in 1 until ys.size - 1) drawLine(lineColor, Offset(0f, ys[k].toFloat()), Offset(this.size.width, ys[k].toFloat()), w)
+                     for (k in 1 until xs.size - 1) drawLine(lineColor, Offset(xs[k].toFloat(), 0f), Offset(xs[k].toFloat(), this.size.height), w)
+diff --git a/app/src/main/java/com/lomkich/fxus/Screens.kt b/app/src/main/java/com/lomkich/fxus/Screens.kt
+index 3bce7fe..a1eebac 100644
+--- a/app/src/main/java/com/lomkich/fxus/Screens.kt
++++ b/app/src/main/java/com/lomkich/fxus/Screens.kt
+@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clip
++import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.graphics.SolidColor
+ import androidx.compose.ui.text.TextStyle
+ import androidx.compose.ui.text.font.FontWeight
+@@ -83,6 +84,8 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
+                 .verticalScroll(rememberScrollState())
+                 .padding(horizontal = 16.dp, vertical = 8.dp)
+         ) {
++            ThemePicker(vm.themeMode, vm::setTheme)
++            Spacer(Modifier.height(20.dp))
+             Field(
+                 label = "Адрес сервера Ollama",
+                 value = host,
+@@ -114,7 +117,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
+                     checked = auto,
+                     onCheckedChange = { auto = it; saved = false },
+                     colors = SwitchDefaults.colors(
+-                        checkedThumbColor = ColBg,
++                        checkedThumbColor = ColOnAccent,
+                         checkedTrackColor = ColAccent,
+                         uncheckedThumbColor = ColMuted,
+                         uncheckedTrackColor = ColSurface,
+@@ -161,7 +164,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
+                     .padding(horizontal = 28.dp),
+                 contentAlignment = Alignment.Center,
+             ) {
+-                Text("Сохранить", color = ColBg, fontSize = 16.sp, fontWeight = FontWeight.Medium)
++                Text("Сохранить", color = ColOnAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+             }
+             if (saved) {
+                 Text("Сохранено", color = ColMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp, start = 4.dp))
+@@ -170,6 +173,44 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
+     }
+ }
+ 
++@Composable
++private fun ThemePicker(current: ThemeMode, onPick: (ThemeMode) -> Unit) {
++    Column {
++        Text("Тема", color = ColMuted, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
++        Row(
++            Modifier
++                .fillMaxWidth()
++                .clip(RoundedCornerShape(14.dp))
++                .background(ColSurface)
++                .padding(4.dp),
++        ) {
++            listOf(
++                ThemeMode.AUTO to "Авто",
++                ThemeMode.LIGHT to "Светлая",
++                ThemeMode.DARK to "Тёмная",
++            ).forEach { (mode, label) ->
++                val selected = mode == current
++                Box(
++                    Modifier
++                        .weight(1f)
++                        .clip(RoundedCornerShape(10.dp))
++                        .background(if (selected) ColUser else Color.Transparent)
++                        .clickable { onPick(mode) }
++                        .padding(vertical = 10.dp),
++                    contentAlignment = Alignment.Center,
++                ) {
++                    Text(
++                        label,
++                        color = if (selected) ColText else ColMuted,
++                        fontSize = 15.sp,
++                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
++                    )
++                }
++            }
++        }
++    }
++}
++
+ @Composable
+ private fun Field(
+     label: String,
+diff --git a/app/src/main/java/com/lomkich/fxus/Theme.kt b/app/src/main/java/com/lomkich/fxus/Theme.kt
+index 570834e..5b16677 100644
+--- a/app/src/main/java/com/lomkich/fxus/Theme.kt
++++ b/app/src/main/java/com/lomkich/fxus/Theme.kt
+@@ -1,40 +1,160 @@
+ package com.lomkich.fxus
+ 
++import androidx.compose.foundation.isSystemInDarkTheme
+ import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.darkColorScheme
++import androidx.compose.material3.lightColorScheme
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.CompositionLocalProvider
++import androidx.compose.runtime.Immutable
++import androidx.compose.runtime.ReadOnlyComposable
++import androidx.compose.runtime.staticCompositionLocalOf
+ import androidx.compose.ui.graphics.Color
+ 
+-// Графит, не чёрный. Белый почти не используется: текст приглушённо-светлый,
+-// чистый акцент только на кнопках действия.
+-val ColBg = Color(0xFF1A1C20)
+-val ColDrawer = Color(0xFF141619)
+-val ColSurface = Color(0xFF24272C)
+-val ColUser = Color(0xFF353A42)
+-val ColText = Color(0xFFE2E4E7)
+-val ColMuted = Color(0xFF8B9099)
+-val ColAccent = Color(0xFFECEDEF)
+-val ColThink = Color(0xFFA0A5AD)   // текст рассуждений
+-val ColCode = Color(0xFF2D3036)    // окно кода: серое, не белое
+-val ColCodeBg = Color(0xFF383C43)  // плашка инлайн-кода
+-val ColCodeBgUser = Color(0xFF4C525C) // инлайн-код внутри пузыря пользователя: светлее ColUser, иначе сливается
+-val ColLink = Color(0xFF9DB4D6)
+-val ColGlass = Color(0xCC24272C)   // «стекло» пузырей: полупрозрачный графит
+-val ColGlassBlur = Color(0x8C24272C) // заливка поверх размытия (API 31+): прозрачнее, чтобы блюр был виден
+-val ColGlassEdge = Color(0x14FFFFFF) // тонкая кромка, чтобы пузырь читался на тёмном
++enum class ThemeMode { AUTO, LIGHT, DARK }
++
++/**
++ * Палитра приложения. Базовые цвета те же, что в ComfyChat (тёплый графит и кремовый светлый),
++ * остальные роли (код, стекло, ссылки) подобраны к ним.
++ */
++@Immutable
++class FxusColors(
++    val dark: Boolean,
++    val bg: Color,
++    val drawer: Color,
++    val surface: Color,
++    val user: Color,        // пузырь пользователя
++    val text: Color,
++    val muted: Color,
++    val accent: Color,
++    val onAccent: Color,    // текст и иконки на акцентной заливке
++    val think: Color,       // текст рассуждений
++    val code: Color,        // окно кода
++    val codeBg: Color,      // плашка инлайн-кода
++    val codeBgUser: Color,  // инлайн-код внутри пузыря пользователя: заметнее пузыря, иначе сливается
++    val link: Color,
++    val glass: Color,       // «стекло» пузырей: полупрозрачная заливка
++    val glassBlur: Color,   // то же поверх размытия (API 31+): прозрачнее, чтобы блюр был виден
++    val glassEdge: Color,   // тонкая кромка, чтобы пузырь читался на фоне
++)
++
++private val DarkFxus = FxusColors(
++    dark = true,
++    bg = Color(0xFF262624),
++    drawer = Color(0xFF1F1E1D),
++    surface = Color(0xFF30302E),
++    user = Color(0xFF3A3A37),
++    text = Color(0xFFFAF9F5),
++    muted = Color(0xFF8A877F),
++    accent = Color(0xFFD97757),
++    onAccent = Color(0xFF1F1E1D),
++    think = Color(0xFFA6A39A),
++    code = Color(0xFF30302E),
++    codeBg = Color(0xFF3A3A37),
++    codeBgUser = Color(0xFF4A4945),
++    link = Color(0xFF9DB4D6),
++    glass = Color(0xCC30302E),
++    glassBlur = Color(0x8C30302E),
++    glassEdge = Color(0x14FFFFFF),
++)
++
++private val LightFxus = FxusColors(
++    dark = false,
++    bg = Color(0xFFFAF9F5),
++    drawer = Color(0xFFF0EEE6),
++    surface = Color(0xFFF0EEE6),
++    user = Color(0xFFE8E6DC),
++    text = Color(0xFF141413),
++    muted = Color(0xFF7A7873),
++    accent = Color(0xFFC6613F),
++    onAccent = Color(0xFFFFFFFF),
++    think = Color(0xFF6B6A68),
++    code = Color(0xFFF0EEE6),
++    codeBg = Color(0xFFE8E6DC),
++    codeBgUser = Color(0xFFDAD9D4),
++    link = Color(0xFF2B5FAE),
++    glass = Color(0xCCF0EEE6),
++    glassBlur = Color(0x8CF0EEE6),
++    glassEdge = Color(0x14000000),
++)
++
++val LocalFxusColors = staticCompositionLocalOf { DarkFxus }
++
++// Прежние имена остались, чтобы не переписывать весь код, но теперь это геттеры темы:
++// читать их можно только внутри @Composable. В Canvas, drawBehind и remember {} сначала
++// кладём цвет в локальную переменную, а уже её используем внутри.
++val ColBg: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.bg
++val ColDrawer: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.drawer
++val ColSurface: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.surface
++val ColUser: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.user
++val ColText: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.text
++val ColMuted: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.muted
++val ColAccent: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.accent
++val ColOnAccent: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.onAccent
++val ColThink: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.think
++val ColCode: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.code
++val ColCodeBg: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.codeBg
++val ColCodeBgUser: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.codeBgUser
++val ColLink: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.link
++val ColGlass: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.glass
++val ColGlassBlur: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.glassBlur
++val ColGlassEdge: Color
++    @Composable @ReadOnlyComposable get() = LocalFxusColors.current.glassEdge
++
++@Composable
++fun ThemeMode.resolveDark(): Boolean = when (this) {
++    ThemeMode.AUTO -> isSystemInDarkTheme()
++    ThemeMode.LIGHT -> false
++    ThemeMode.DARK -> true
++}
+ 
+ @Composable
+-fun FxusTheme(content: @Composable () -> Unit) {
+-    MaterialTheme(
+-        colorScheme = darkColorScheme(
+-            background = ColBg,
+-            surface = ColSurface,
+-            surfaceContainer = ColSurface, // фон выпадающего списка моделей
+-            primary = ColAccent,
+-            onPrimary = ColBg,
+-            onBackground = ColText,
+-            onSurface = ColText,
+-        ),
+-        content = content,
+-    )
++fun FxusTheme(mode: ThemeMode, content: @Composable () -> Unit) {
++    val dark = mode.resolveDark()
++    val c = if (dark) DarkFxus else LightFxus
++    val scheme = if (dark) {
++        darkColorScheme(
++            background = c.bg,
++            surface = c.surface,
++            surfaceContainer = c.surface, // фон выпадающего списка моделей
++            surfaceVariant = c.user,
++            primary = c.accent,
++            onPrimary = c.onAccent,
++            onBackground = c.text,
++            onSurface = c.text,
++            onSurfaceVariant = c.think,
++            outline = Color(0xFF4A4945),
++        )
++    } else {
++        lightColorScheme(
++            background = c.bg,
++            surface = c.surface,
++            surfaceContainer = c.surface,
++            surfaceVariant = c.user,
++            primary = c.accent,
++            onPrimary = c.onAccent,
++            onBackground = c.text,
++            onSurface = c.text,
++            onSurfaceVariant = c.think,
++            outline = Color(0xFFDAD9D4),
++        )
++    }
++    CompositionLocalProvider(LocalFxusColors provides c) {
++        MaterialTheme(colorScheme = scheme, content = content)
++    }
+ }
+diff --git a/app/src/main/res/values-night/themes.xml b/app/src/main/res/values-night/themes.xml
+new file mode 100644
+index 0000000..1564759
+--- /dev/null
++++ b/app/src/main/res/values-night/themes.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <style name="Theme.Fxus" parent="android:Theme.Material.NoActionBar">
++        <item name="android:windowBackground">#FF262624</item>
++    </style>
++</resources>
+diff --git a/app/src/main/res/values/themes.xml b/app/src/main/res/values/themes.xml
+index 75a3217..3338890 100644
+--- a/app/src/main/res/values/themes.xml
++++ b/app/src/main/res/values/themes.xml
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <style name="Theme.Fxus" parent="android:Theme.Material.NoActionBar">
+-        <item name="android:windowBackground">#FF1A1C20</item>
++    <style name="Theme.Fxus" parent="android:Theme.Material.Light.NoActionBar">
++        <item name="android:windowBackground">#FFFAF9F5</item>
+     </style>
+ </resources>

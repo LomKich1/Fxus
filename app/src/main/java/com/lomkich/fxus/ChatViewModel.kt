@@ -62,6 +62,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Через сколько минут простоя Termux гасит сервер (0 = не гасить). Уходит в скрипт запуска. */
     var idleMinutes by mutableStateOf(prefs.getInt("idle_min", 10))
         private set
+    /** Тема оформления: авто (как в системе), светлая или тёмная. Применяется сразу, без «Сохранить». */
+    var themeMode by mutableStateOf(
+        runCatching { ThemeMode.valueOf(prefs.getString("theme", "").orEmpty()) }.getOrDefault(ThemeMode.AUTO)
+    )
+        private set
     /** Список сохранённых чатов, свежие сверху. */
     var chats by mutableStateOf<List<ChatMeta>>(emptyList())
         private set
@@ -130,6 +135,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             .putInt("idle_min", idleMinutes)
             .apply()
         refreshModels()
+    }
+
+    fun setTheme(mode: ThemeMode) {
+        themeMode = mode
+        prefs.edit().putString("theme", mode.name).apply()
     }
 
     // ---------- история чатов ----------

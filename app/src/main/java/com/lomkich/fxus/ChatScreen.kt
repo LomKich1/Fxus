@@ -101,10 +101,6 @@ import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 
-// Затемнение под системными панелями и вокруг пузырей: плотное у края экрана, к контенту сходит в ноль.
-private val ScrimTop = Brush.verticalGradient(listOf(ColBg.copy(alpha = 0.95f), Color.Transparent))
-private val ScrimBottom = Brush.verticalGradient(listOf(Color.Transparent, ColBg.copy(alpha = 0.95f)))
-
 /**
  * Список сообщений занимает весь экран и уходит под шапку, поле ввода и системные панели.
  * Шапка и ввод плавают поверх (пузыри), а их высоту список получает как contentPadding,
@@ -115,6 +111,10 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
     val listState = rememberLazyListState()
     val hazeState = remember { HazeState() }
     val density = LocalDensity.current
+    // Затемнение под системными панелями и вокруг пузырей: плотное у края экрана, к контенту сходит в ноль.
+    val bgColor = ColBg
+    val scrimTop = remember(bgColor) { Brush.verticalGradient(listOf(bgColor.copy(alpha = 0.95f), Color.Transparent)) }
+    val scrimBottom = remember(bgColor) { Brush.verticalGradient(listOf(Color.Transparent, bgColor.copy(alpha = 0.95f))) }
     var topPx by remember { mutableIntStateOf(0) }
     var bottomPx by remember { mutableIntStateOf(0) }
     var modelOpen by remember { mutableStateOf(false) }
@@ -235,7 +235,7 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .onSizeChanged { topPx = it.height }
-                .background(ScrimTop)
+                .background(scrimTop)
                 .statusBarsPadding()
                 .padding(bottom = 12.dp)
         ) {
@@ -259,7 +259,7 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .onSizeChanged { bottomPx = it.height }
-                .background(ScrimBottom)
+                .background(scrimBottom)
                 .padding(top = 12.dp)
                 .navigationBarsPadding()
         ) {
@@ -329,6 +329,7 @@ private fun EmptyChat(modifier: Modifier = Modifier) {
 /** Восьмилучевая звёздочка, приглушённая. */
 @Composable
 private fun Sparkle() {
+    val ray = ColMuted
     Canvas(Modifier.size(28.dp)) {
         val c = Offset(size.width / 2f, size.height / 2f)
         val sw = 2.5.dp.toPx()
@@ -337,7 +338,7 @@ private fun Sparkle() {
             val dx = cos(a).toFloat()
             val dy = sin(a).toFloat()
             drawLine(
-                ColMuted,
+                ray,
                 Offset(c.x + dx * size.width * 0.18f, c.y + dy * size.height * 0.18f),
                 Offset(c.x + dx * size.width * 0.5f, c.y + dy * size.height * 0.5f),
                 sw,
@@ -387,11 +388,12 @@ private fun MenuButton(onClick: () -> Unit) {
         Modifier.size(44.dp).glass(CircleShape).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
+        val bar = ColText
         Canvas(Modifier.size(22.dp)) {
             val stroke = 2.dp.toPx()
             listOf(0.2f, 0.5f, 0.8f).forEach { y ->
                 drawLine(
-                    color = ColText,
+                    color = bar,
                     start = Offset(0f, size.height * y),
                     end = Offset(size.width, size.height * y),
                     strokeWidth = stroke,
@@ -487,10 +489,11 @@ private fun ModelRow(name: String, selected: Boolean, onClick: () -> Unit) {
         )
         if (selected) {
             Spacer(Modifier.width(8.dp))
+            val tick = ColText
             Canvas(Modifier.size(16.dp)) {
                 val sw = 2.dp.toPx()
-                drawLine(ColText, Offset(size.width * 0.1f, size.height * 0.55f), Offset(size.width * 0.4f, size.height * 0.85f), sw, StrokeCap.Round)
-                drawLine(ColText, Offset(size.width * 0.4f, size.height * 0.85f), Offset(size.width * 0.9f, size.height * 0.2f), sw, StrokeCap.Round)
+                drawLine(tick, Offset(size.width * 0.1f, size.height * 0.55f), Offset(size.width * 0.4f, size.height * 0.85f), sw, StrokeCap.Round)
+                drawLine(tick, Offset(size.width * 0.4f, size.height * 0.85f), Offset(size.width * 0.9f, size.height * 0.2f), sw, StrokeCap.Round)
             }
         }
     }
@@ -545,10 +548,11 @@ private fun Dots(label: String, color: Color, fontSize: TextUnit, modifier: Modi
 @Composable
 private fun Chevron(open: Boolean) {
     val rot by animateFloatAsState(if (open) 180f else 0f, tween(200), label = "chevron")
+    val arrow = ColMuted
     Canvas(Modifier.size(12.dp).graphicsLayer { rotationZ = rot }) {
         val sw = 1.5.dp.toPx()
-        drawLine(ColMuted, Offset(size.width * 0.15f, size.height * 0.35f), Offset(size.width / 2f, size.height * 0.7f), sw, StrokeCap.Round)
-        drawLine(ColMuted, Offset(size.width * 0.85f, size.height * 0.35f), Offset(size.width / 2f, size.height * 0.7f), sw, StrokeCap.Round)
+        drawLine(arrow, Offset(size.width * 0.15f, size.height * 0.35f), Offset(size.width / 2f, size.height * 0.7f), sw, StrokeCap.Round)
+        drawLine(arrow, Offset(size.width * 0.85f, size.height * 0.35f), Offset(size.width / 2f, size.height * 0.7f), sw, StrokeCap.Round)
     }
 }
 
@@ -779,7 +783,7 @@ private fun ActionButton(action: Action, onClick: () -> Unit) {
                 .background(if (isMic) ColUser else ColAccent),
             contentAlignment = Alignment.Center,
         ) {
-            ActionIcon(shown, if (isMic) ColText else ColBg)
+            ActionIcon(shown, if (isMic) ColText else ColOnAccent)
         }
     }
 }

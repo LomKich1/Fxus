@@ -93,7 +93,7 @@ fun DrawerContent(
                     .padding(horizontal = 22.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("+  Новый чат", color = ColBg, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Text("+  Новый чат", color = ColOnAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
         }
     }
@@ -116,8 +116,8 @@ private fun DrawerItem(title: String, onClick: () -> Unit) {
 /** С ником: первая буква в кружке. Без ника: силуэт «человек по плечи». */
 @Composable
 fun Avatar(nick: String, diameter: Dp, modifier: Modifier = Modifier) {
-    val bg = Color(0xFF343A47)
-    val fg = Color(0xFF9AA0B4)
+    val bg = ColUser
+    val fg = ColMuted
     if (nick.isNotBlank()) {
         Box(
             Modifier.size(diameter).clip(CircleShape).then(modifier).background(bg),

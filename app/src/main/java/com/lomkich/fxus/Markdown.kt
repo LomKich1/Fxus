@@ -200,9 +200,9 @@ private fun parseMarkdown(src: String): List<Block> {
 private const val CODE_TAG = "code"
 
 /** Цвет плашки инлайн-кода: у пользователя светлее, чтобы читалась на фоне его пузыря. */
-private val LocalCodeBg = compositionLocalOf { ColCodeBg }
+private val LocalCodeBg = compositionLocalOf { Color.Unspecified } // реальный цвет задаёт Markdown()
 
-private fun AnnotatedString.Builder.md(src: String) {
+private fun AnnotatedString.Builder.md(src: String, link: Color) {
     var i = 0
     while (i < src.length) {
         val c = src[i]
@@ -223,7 +223,7 @@ private fun AnnotatedString.Builder.md(src: String) {
             val mark = src.substring(i, i + 2)
             val end = src.indexOf(mark, i + 2)
             if (end > i + 2) {
-                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { md(src.substring(i + 2, end)) }
+                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { md(src.substring(i + 2, end), link) }
                 i = end + 2
             } else {
                 append(mark)
@@ -233,7 +233,7 @@ private fun AnnotatedString.Builder.md(src: String) {
         } else if (src.startsWith("~~", i)) {
             val end = src.indexOf("~~", i + 2)
             if (end > i + 2) {
-                withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { md(src.substring(i + 2, end)) }
+                withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { md(src.substring(i + 2, end), link) }
                 i = end + 2
             } else {
                 append("~~")
@@ -247,7 +247,7 @@ private fun AnnotatedString.Builder.md(src: String) {
             val endOk = end > i + 1 && !src[end - 1].isWhitespace() &&
                 (c == '*' || end + 1 >= src.length || !src[end + 1].isLetterOrDigit())
             if (endOk) {
-                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { md(src.substring(i + 1, end)) }
+                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { md(src.substring(i + 1, end), link) }
                 i = end + 1
                 continue
             }
@@ -256,8 +256,8 @@ private fun AnnotatedString.Builder.md(src: String) {
             val close = if (mid > i) src.indexOf(')', mid + 2) else -1
             if (mid > i && close > mid) {
                 // ссылка пока только выглядит как ссылка, перехода по тапу нет
-                withStyle(SpanStyle(textDecoration = TextDecoration.Underline, color = ColLink)) {
-                    md(src.substring(i + 1, mid))
+                withStyle(SpanStyle(textDecoration = TextDecoration.Underline, color = link)) {
+                    md(src.substring(i + 1, mid), link)
                 }
                 i = close + 1
                 continue
@@ -335,7 +335,8 @@ private fun MdText(
     align: TextAlign? = null,
     modifier: Modifier = Modifier,
 ) {
-    val styled = remember(text) { buildAnnotatedString { md(text) } }
+    val link = ColLink
+    val styled = remember(text, link) { buildAnnotatedString { md(text, link) } }
     val codeBg = LocalCodeBg.current
     // раскладку держим в обычном массиве, не в state: рисование идёт после layout в том же кадре
     val layout = remember { arrayOfNulls<TextLayoutResult>(1) }
@@ -414,6 +415,7 @@ private fun TableView(t: Table) {
     val grid = remember { Grid() }
     val cols = t.header.size
     val lineColor = ColMuted.copy(alpha = 0.28f)
+    val headerBg = ColCodeBg
     val maxColPx = with(LocalDensity.current) { 260.dp.roundToPx() }
     Box(
         Modifier
@@ -430,7 +432,7 @@ private fun TableView(t: Table) {
                 val xs = grid.xs
                 val ys = grid.ys
                 if (ys.size > 1 && xs.size > 1) {
-                    drawRect(ColCodeBg, Offset.Zero, Size(this.size.width, ys[1].toFloat()))
+                    drawRect(headerBg, Offset.Zero, Size(this.size.width, ys[1].toFloat()))
                     val w = 1.dp.toPx()
                     for (k in 1 until ys.size - 1) drawLine(lineColor, Offset(0f, ys[k].toFloat()), Offset(this.size.width, ys[k].toFloat()), w)
                     for (k in 1 until xs.size - 1) drawLine(lineColor, Offset(xs[k].toFloat(), 0f), Offset(xs[k].toFloat(), this.size.height), w)

@@ -24,6 +24,11 @@ val LocalHazeState = staticCompositionLocalOf<HazeState?> { null }
 @Composable
 fun Modifier.glass(shape: Shape, strong: Boolean = false): Modifier {
     val haze = LocalHazeState.current
+    // цвета читаем здесь: внутри hazeEffect {} это уже не @Composable
+    val bgColor = ColBg
+    val fill = ColGlass
+    val fillBlur = ColGlassBlur
+    val edge = ColGlassEdge
     // strong: плотнее заливка (выпадающий список поверх текста должен читаться)
     val blurred = haze != null && Build.VERSION.SDK_INT >= 31 && !strong
     var m = this.clip(shape)
@@ -31,8 +36,8 @@ fun Modifier.glass(shape: Shape, strong: Boolean = false): Modifier {
         m = m.hazeEffect(state = haze) {
             blurRadius = 18.dp
             noiseFactor = 0f
-            backgroundColor = ColBg
+            backgroundColor = bgColor
         }
     }
-    return m.background(if (blurred) ColGlassBlur else ColGlass).border(0.5.dp, ColGlassEdge, shape)
+    return m.background(if (blurred) fillBlur else fill).border(0.5.dp, edge, shape)
 }
