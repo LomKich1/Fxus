@@ -1,0 +1,725 @@
+diff --git a/app/src/main/java/com/lomkich/fxus/App.kt b/app/src/main/java/com/lomkich/fxus/App.kt
+index 2154c65..6e5abdb 100644
+--- a/app/src/main/java/com/lomkich/fxus/App.kt
++++ b/app/src/main/java/com/lomkich/fxus/App.kt
+@@ -44,7 +44,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
+ import kotlinx.coroutines.launch
+ import kotlin.math.roundToInt
+ 
+-enum class Screen { CHAT, CHATS, ARTIFACTS, SETTINGS }
++enum class Screen { CHAT, CHATS, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
+ 
+ /**
+  * Два слоя: меню лежит сзади, экран (чат/настройки/заглушки) сверху.
+@@ -77,7 +77,7 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+         drawerOpen = true
+     }
+ 
+-    // из настроек выходим в меню (оттуда пришли), из остальных экранов в чат
++    // из настроек, языка и помощи выходим в меню (оттуда пришли), из остальных экранов в чат
+     fun leaveSettings() {
+         screen = Screen.CHAT
+         openDrawer()
+@@ -86,7 +86,7 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+     BackHandler(enabled = drawerOpen || screen != Screen.CHAT) {
+         when {
+             drawerOpen -> drawerOpen = false
+-            screen == Screen.SETTINGS -> leaveSettings()
++            screen == Screen.SETTINGS || screen == Screen.LANGUAGE || screen == Screen.HELP -> leaveSettings()
+             else -> screen = Screen.CHAT
+         }
+     }
+@@ -186,6 +186,8 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+                     go(Screen.CHAT)
+                 },
+                 onProfile = { go(Screen.SETTINGS) },
++                onLanguage = { go(Screen.LANGUAGE) },
++                onHelp = { go(Screen.HELP) },
+             )
+         }
+ 
+@@ -219,6 +221,8 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+                         )
+                         Screen.ARTIFACTS -> ComingSoon("Артефакты") { screen = Screen.CHAT }
+                         Screen.SETTINGS -> SettingsScreen(vm, onBack = ::leaveSettings)
++                        Screen.LANGUAGE -> ComingSoon("Язык", onBack = ::leaveSettings)
++                        Screen.HELP -> HelpScreen(onBack = ::leaveSettings)
+                         Screen.CHAT -> Unit
+                     }
+                 }
+diff --git a/app/src/main/java/com/lomkich/fxus/ChatViewModel.kt b/app/src/main/java/com/lomkich/fxus/ChatViewModel.kt
+index 8fc96c0..dd299d1 100644
+--- a/app/src/main/java/com/lomkich/fxus/ChatViewModel.kt
++++ b/app/src/main/java/com/lomkich/fxus/ChatViewModel.kt
+@@ -62,9 +62,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
+     /** Через сколько минут простоя Termux гасит сервер (0 = не гасить). Уходит в скрипт запуска. */
+     var idleMinutes by mutableStateOf(prefs.getInt("idle_min", 10))
+         private set
+-    /** Тема оформления: авто (как в системе), светлая или тёмная. Применяется сразу, без «Сохранить». */
++    /** Тема оформления. По умолчанию тёмная; переключается кнопкой в настройках, применяется сразу. */
+     var themeMode by mutableStateOf(
+-        runCatching { ThemeMode.valueOf(prefs.getString("theme", "").orEmpty()) }.getOrDefault(ThemeMode.AUTO)
++        runCatching { ThemeMode.valueOf(prefs.getString("theme", "").orEmpty()) }.getOrDefault(ThemeMode.DARK)
+     )
+         private set
+     /** Список сохранённых чатов, свежие сверху. */
+diff --git a/app/src/main/java/com/lomkich/fxus/Drawer.kt b/app/src/main/java/com/lomkich/fxus/Drawer.kt
+index a753b1a..e2fcf4f 100644
+--- a/app/src/main/java/com/lomkich/fxus/Drawer.kt
++++ b/app/src/main/java/com/lomkich/fxus/Drawer.kt
+@@ -14,12 +14,20 @@ import androidx.compose.foundation.layout.navigationBarsPadding
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.layout.size
+ import androidx.compose.foundation.layout.statusBarsPadding
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.layout.widthIn
+ import androidx.compose.foundation.lazy.LazyColumn
+ import androidx.compose.foundation.lazy.items
+ import androidx.compose.foundation.shape.CircleShape
+ import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material3.DropdownMenu
++import androidx.compose.material3.DropdownMenuItem
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clip
+@@ -28,6 +36,7 @@ import androidx.compose.ui.geometry.Offset
+ import androidx.compose.ui.geometry.Size
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.style.TextOverflow
+ import androidx.compose.ui.unit.Dp
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.unit.sp
+@@ -44,6 +53,8 @@ fun DrawerContent(
+     onArtifacts: () -> Unit,
+     onNewChat: () -> Unit,
+     onProfile: () -> Unit,
++    onLanguage: () -> Unit,
++    onHelp: () -> Unit,
+ ) {
+     Column(
+         Modifier
+@@ -81,9 +92,39 @@ fun DrawerContent(
+             }
+         }
+ 
++        var menu by remember { mutableStateOf(false) }
+         Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+-            Avatar(nick, 52.dp, Modifier.clickable(onClick = onProfile))
+-            Spacer(Modifier.weight(1f))
++            // профиль: тап открывает меню со списком (настройки, язык, помощь)
++            Box(Modifier.weight(1f)) {
++                Row(
++                    Modifier
++                        .clip(RoundedCornerShape(26.dp))
++                        .clickable { menu = true }
++                        .padding(end = 14.dp),
++                    verticalAlignment = Alignment.CenterVertically,
++                ) {
++                    Avatar(nick, 52.dp)
++                    Spacer(Modifier.width(10.dp))
++                    Text(
++                        nick.ifBlank { "Профиль" },
++                        color = ColText,
++                        fontSize = 16.sp,
++                        maxLines = 1,
++                        overflow = TextOverflow.Ellipsis,
++                        modifier = Modifier.weight(1f, fill = false),
++                    )
++                    Spacer(Modifier.width(6.dp))
++                    ChevronIcon(up = true)
++                }
++                ProfileMenu(
++                    expanded = menu,
++                    onDismiss = { menu = false },
++                    onSettings = onProfile,
++                    onLanguage = onLanguage,
++                    onHelp = onHelp,
++                )
++            }
++            Spacer(Modifier.width(8.dp))
+             Box(
+                 Modifier
+                     .height(52.dp)
+@@ -99,6 +140,48 @@ fun DrawerContent(
+     }
+ }
+ 
++/** Выпадающее меню профиля: плотная карточка с иконками, раскрывается вверх, если внизу нет места. */
++@Composable
++private fun ProfileMenu(
++    expanded: Boolean,
++    onDismiss: () -> Unit,
++    onSettings: () -> Unit,
++    onLanguage: () -> Unit,
++    onHelp: () -> Unit,
++) {
++    DropdownMenu(
++        expanded = expanded,
++        onDismissRequest = onDismiss,
++        modifier = Modifier.widthIn(min = 230.dp),
++        shape = RoundedCornerShape(18.dp),
++        containerColor = ColSurface,
++        tonalElevation = 0.dp,
++        shadowElevation = 8.dp,
++    ) {
++        ProfileMenuItem("Настройки", { GearIcon() }) {
++            onDismiss()
++            onSettings()
++        }
++        ProfileMenuItem("Язык", { GlobeIcon() }) {
++            onDismiss()
++            onLanguage()
++        }
++        ProfileMenuItem("Помощь", { HelpIcon() }) {
++            onDismiss()
++            onHelp()
++        }
++    }
++}
++
++@Composable
++private fun ProfileMenuItem(label: String, icon: @Composable () -> Unit, onClick: () -> Unit) {
++    DropdownMenuItem(
++        text = { Text(label, color = ColText, fontSize = 16.sp) },
++        leadingIcon = icon,
++        onClick = onClick,
++    )
++}
++
+ @Composable
+ private fun DrawerItem(title: String, onClick: () -> Unit) {
+     Text(
+diff --git a/app/src/main/java/com/lomkich/fxus/HelpScreen.kt b/app/src/main/java/com/lomkich/fxus/HelpScreen.kt
+new file mode 100644
+index 0000000..2ee731e
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/HelpScreen.kt
+@@ -0,0 +1,105 @@
++package com.lomkich.fxus
++
++import androidx.compose.foundation.background
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.text.font.FontFamily
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
++
++@Composable
++fun HelpScreen(onBack: () -> Unit) {
++    Column(Modifier.fillMaxSize()) {
++        TopBar("Помощь", onBack)
++        Column(
++            Modifier
++                .weight(1f)
++                .fillMaxWidth()
++                .verticalScroll(rememberScrollState())
++                .padding(horizontal = 16.dp, vertical = 4.dp),
++            verticalArrangement = Arrangement.spacedBy(8.dp),
++        ) {
++            HelpTitle("Что это")
++            HelpText(
++                "Fxus: чат с локальными моделями через Ollama. Сервер (ollama serve) обычно работает " +
++                    "в Termux на этом же телефоне, но может быть и на другом устройстве. " +
++                    "Адрес задаётся в настройках, по умолчанию http://127.0.0.1:11434."
++            )
++
++            HelpTitle("Как пользоваться")
++            HelpText("•  Модель выбирается в шапке чата. Внизу того же списка кнопка «Запустить Ollama» или «Остановить Ollama» (только для локального адреса).")
++            HelpText("•  Чаты сохраняются сами. Свежие видны в меню, все на экране «Чаты», там же поиск. Долгий тап по чату: переименовать или удалить.")
++            HelpText("•  Меню открывается свайпом вправо по чату или кнопкой слева вверху. Новый чат: кнопка внизу меню.")
++            HelpText("•  Ответы показываются с форматированием: списки, таблицы, блоки кода.")
++            HelpText("•  Ник из настроек: модель будет обращаться к тебе по нему.")
++
++            HelpTitle("Сервер и Termux")
++            HelpText(
++                "Если включить «Запускать Ollama автоматически», Fxus сам запустит ollama serve через Termux, " +
++                    "когда сервер не отвечает. Это работает только для локального адреса."
++            )
++            HelpText(
++                "Для этого в Termux в файл ~/.termux/termux.properties нужна строка allow-external-apps=true " +
++                    "(после неё Termux надо перезапустить). Fxus при первом запуске попросит разрешение на команды Termux."
++            )
++            HelpText(
++                "«Остановка при простое» выключает сервер, который запустил Fxus, если им давно не пользовались. " +
++                    "0 значит не останавливать."
++            )
++
++            HelpTitle("Команды в чате")
++            HelpText("Строка, которая начинается с /, обрабатывается приложением и в модель не уходит.")
++            HelpCommand("/help", "список команд прямо в чате")
++            HelpCommand("/clear", "начать с чистого контекста; прошлый чат остаётся в списке")
++            HelpCommand("/load <модель>", "сменить модель; контекст при этом сбрасывается")
++            HelpCommand("/show", "текущие настройки: модель, адрес, ник, think, system, параметры")
++            HelpCommand("/set think [high|medium|low]", "включить рассуждения; уровень можно не указывать")
++            HelpCommand("/set nothink", "выключить рассуждения")
++            HelpCommand("/set system <текст>", "системный промпт; это то же поле, что в настройках, и оно сохраняется")
++            HelpCommand("/set parameter <имя> <значение>", "параметр модели, например temperature 0.7 или num_ctx 8192")
++            HelpText("think и parameter действуют, пока приложение не закрыто. Свои параметры можно проверить через /show.")
++
++            HelpTitle("Оформление")
++            HelpText("Кнопка справа вверху в настройках переключает тёмную и светлую тему.")
++
++            Spacer(Modifier.height(28.dp))
++        }
++    }
++}
++
++@Composable
++private fun HelpTitle(text: String) {
++    Text(text, color = ColMuted, fontSize = 14.sp, modifier = Modifier.padding(start = 4.dp, top = 14.dp))
++}
++
++@Composable
++private fun HelpText(text: String) {
++    Text(text, color = ColText, fontSize = 16.sp, lineHeight = 23.sp, modifier = Modifier.padding(horizontal = 4.dp))
++}
++
++@Composable
++private fun HelpCommand(cmd: String, desc: String) {
++    Column(
++        Modifier
++            .fillMaxWidth()
++            .clip(RoundedCornerShape(14.dp))
++            .background(ColSurface)
++            .padding(horizontal = 14.dp, vertical = 12.dp),
++    ) {
++        Text(cmd, color = ColText, fontSize = 15.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium)
++        Text(desc, color = ColMuted, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/Icons.kt b/app/src/main/java/com/lomkich/fxus/Icons.kt
+new file mode 100644
+index 0000000..5551940
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/Icons.kt
+@@ -0,0 +1,123 @@
++package com.lomkich.fxus
++
++import androidx.compose.foundation.Canvas
++import androidx.compose.foundation.border
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.shape.CircleShape
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.geometry.Offset
++import androidx.compose.ui.geometry.Rect
++import androidx.compose.ui.geometry.Size
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.Path
++import androidx.compose.ui.graphics.PathOperation
++import androidx.compose.ui.graphics.StrokeCap
++import androidx.compose.ui.graphics.StrokeJoin
++import androidx.compose.ui.graphics.drawscope.DrawScope
++import androidx.compose.ui.graphics.drawscope.Stroke
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.unit.Dp
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
++import kotlin.math.cos
++import kotlin.math.sin
++
++/*
++ * Иконки в одном тонком контурном стиле, нарисованные руками (без библиотеки иконок).
++ * Цвет передаётся параметром: внутри Canvas цвета темы читать нельзя.
++ */
++
++private fun DrawScope.rays(color: Color, count: Int, from: Float, to: Float, width: Float) {
++    val c = center
++    val m = size.minDimension
++    for (i in 0 until count) {
++        val a = Math.PI * 2 * i / count
++        val dx = cos(a).toFloat()
++        val dy = sin(a).toFloat()
++        drawLine(
++            color,
++            Offset(c.x + dx * m * from, c.y + dy * m * from),
++            Offset(c.x + dx * m * to, c.y + dy * m * to),
++            width,
++            StrokeCap.Round,
++        )
++    }
++}
++
++private fun DrawScope.drawSun(color: Color) {
++    val sw = 1.8.dp.toPx()
++    drawCircle(color, radius = size.minDimension * 0.2f, center = center, style = Stroke(sw))
++    rays(color, 8, 0.34f, 0.47f, sw)
++}
++
++private fun DrawScope.drawMoon(color: Color) {
++    val r = size.minDimension * 0.42f
++    val c = center
++    val disc = Path().apply { addOval(Rect(center = c, radius = r)) }
++    val bite = Path().apply { addOval(Rect(center = Offset(c.x + r * 0.55f, c.y - r * 0.45f), radius = r * 0.85f)) }
++    val moon = Path.combine(PathOperation.Difference, disc, bite)
++    drawPath(moon, color, style = Stroke(1.8.dp.toPx(), join = StrokeJoin.Round))
++}
++
++private fun DrawScope.drawGear(color: Color) {
++    val sw = 1.7.dp.toPx()
++    val m = size.minDimension
++    drawCircle(color, radius = m * 0.3f, center = center, style = Stroke(sw))
++    drawCircle(color, radius = m * 0.12f, center = center, style = Stroke(sw))
++    rays(color, 8, 0.3f, 0.45f, 2.6.dp.toPx())
++}
++
++private fun DrawScope.drawGlobe(color: Color) {
++    val sw = 1.7.dp.toPx()
++    val c = center
++    val r = size.minDimension * 0.42f
++    drawCircle(color, radius = r, center = c, style = Stroke(sw))
++    drawOval(color, topLeft = Offset(c.x - r * 0.42f, c.y - r), size = Size(r * 0.84f, r * 2f), style = Stroke(sw))
++    drawLine(color, Offset(c.x - r, c.y), Offset(c.x + r, c.y), sw)
++}
++
++private fun DrawScope.drawChevron(color: Color, up: Boolean) {
++    val w = size.width
++    val h = size.height
++    val sw = 1.8.dp.toPx()
++    val tip = if (up) 0.3f else 0.7f
++    val base = if (up) 0.65f else 0.35f
++    drawLine(color, Offset(w * 0.15f, h * base), Offset(w * 0.5f, h * tip), sw, StrokeCap.Round)
++    drawLine(color, Offset(w * 0.85f, h * base), Offset(w * 0.5f, h * tip), sw, StrokeCap.Round)
++}
++
++@Composable
++fun SunIcon(color: Color = ColText, size: Dp = 22.dp) {
++    Canvas(Modifier.size(size)) { drawSun(color) }
++}
++
++@Composable
++fun MoonIcon(color: Color = ColText, size: Dp = 22.dp) {
++    Canvas(Modifier.size(size)) { drawMoon(color) }
++}
++
++@Composable
++fun GearIcon(color: Color = ColText, size: Dp = 20.dp) {
++    Canvas(Modifier.size(size)) { drawGear(color) }
++}
++
++@Composable
++fun GlobeIcon(color: Color = ColText, size: Dp = 20.dp) {
++    Canvas(Modifier.size(size)) { drawGlobe(color) }
++}
++
++@Composable
++fun ChevronIcon(color: Color = ColMuted, up: Boolean = false, size: Dp = 14.dp) {
++    Canvas(Modifier.size(size)) { drawChevron(color, up) }
++}
++
++@Composable
++fun HelpIcon(color: Color = ColText, size: Dp = 20.dp) {
++    Box(Modifier.size(size).border(1.7.dp, color, CircleShape), contentAlignment = Alignment.Center) {
++        Text("?", color = color, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/MainActivity.kt b/app/src/main/java/com/lomkich/fxus/MainActivity.kt
+index 2630b32..611eccd 100644
+--- a/app/src/main/java/com/lomkich/fxus/MainActivity.kt
++++ b/app/src/main/java/com/lomkich/fxus/MainActivity.kt
+@@ -26,7 +26,9 @@ class MainActivity : ComponentActivity() {
+                 onDispose { }
+             }
+ 
+-            FxusTheme(mode) { FxusApp(vm) }
++            ThemeReveal(isDark = dark, onSetTheme = vm::setTheme) {
++                FxusTheme(mode) { FxusApp(vm) }
++            }
+         }
+     }
+ }
+diff --git a/app/src/main/java/com/lomkich/fxus/Screens.kt b/app/src/main/java/com/lomkich/fxus/Screens.kt
+index a1eebac..e1f2be6 100644
+--- a/app/src/main/java/com/lomkich/fxus/Screens.kt
++++ b/app/src/main/java/com/lomkich/fxus/Screens.kt
+@@ -30,7 +30,9 @@ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clip
+-import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.geometry.Offset
++import androidx.compose.ui.layout.boundsInWindow
++import androidx.compose.ui.layout.onGloballyPositioned
+ import androidx.compose.ui.graphics.SolidColor
+ import androidx.compose.ui.text.TextStyle
+ import androidx.compose.ui.text.font.FontWeight
+@@ -39,7 +41,7 @@ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.unit.sp
+ 
+ @Composable
+-fun TopBar(title: String, onBack: () -> Unit) {
++fun TopBar(title: String, onBack: () -> Unit, trailing: @Composable () -> Unit = {}) {
+     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+         Box(
+             Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onBack),
+@@ -47,7 +49,32 @@ fun TopBar(title: String, onBack: () -> Unit) {
+         ) {
+             Text("←", color = ColText, fontSize = 22.sp)
+         }
+-        Text(title, color = ColText, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
++        Text(
++            title,
++            color = ColText,
++            fontSize = 20.sp,
++            fontWeight = FontWeight.SemiBold,
++            modifier = Modifier.padding(start = 8.dp).weight(1f),
++        )
++        trailing()
++    }
++}
++
++/** Солнце в тёмной теме (нажать: станет светлой), луна в светлой. Круг анимации растёт из центра кнопки. */
++@Composable
++private fun ThemeToggleButton() {
++    val toggle = LocalThemeToggle.current
++    val dark = LocalFxusColors.current.dark
++    var center by remember { mutableStateOf(Offset.Zero) }
++    Box(
++        Modifier
++            .size(44.dp)
++            .clip(CircleShape)
++            .onGloballyPositioned { center = it.boundsInWindow().center }
++            .clickable { toggle(center) },
++        contentAlignment = Alignment.Center,
++    ) {
++        if (dark) SunIcon() else MoonIcon()
+     }
+ }
+ 
+@@ -77,15 +104,13 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
+     }
+ 
+     Column(Modifier.fillMaxSize()) {
+-        TopBar("Настройки", onBack)
++        TopBar("Настройки", onBack) { ThemeToggleButton() }
+         Column(
+             Modifier
+                 .fillMaxWidth()
+                 .verticalScroll(rememberScrollState())
+                 .padding(horizontal = 16.dp, vertical = 8.dp)
+         ) {
+-            ThemePicker(vm.themeMode, vm::setTheme)
+-            Spacer(Modifier.height(20.dp))
+             Field(
+                 label = "Адрес сервера Ollama",
+                 value = host,
+@@ -173,44 +198,6 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
+     }
+ }
+ 
+-@Composable
+-private fun ThemePicker(current: ThemeMode, onPick: (ThemeMode) -> Unit) {
+-    Column {
+-        Text("Тема", color = ColMuted, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+-        Row(
+-            Modifier
+-                .fillMaxWidth()
+-                .clip(RoundedCornerShape(14.dp))
+-                .background(ColSurface)
+-                .padding(4.dp),
+-        ) {
+-            listOf(
+-                ThemeMode.AUTO to "Авто",
+-                ThemeMode.LIGHT to "Светлая",
+-                ThemeMode.DARK to "Тёмная",
+-            ).forEach { (mode, label) ->
+-                val selected = mode == current
+-                Box(
+-                    Modifier
+-                        .weight(1f)
+-                        .clip(RoundedCornerShape(10.dp))
+-                        .background(if (selected) ColUser else Color.Transparent)
+-                        .clickable { onPick(mode) }
+-                        .padding(vertical = 10.dp),
+-                    contentAlignment = Alignment.Center,
+-                ) {
+-                    Text(
+-                        label,
+-                        color = if (selected) ColText else ColMuted,
+-                        fontSize = 15.sp,
+-                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+-                    )
+-                }
+-            }
+-        }
+-    }
+-}
+-
+ @Composable
+ private fun Field(
+     label: String,
+diff --git a/app/src/main/java/com/lomkich/fxus/Theme.kt b/app/src/main/java/com/lomkich/fxus/Theme.kt
+index 5b16677..f9a1d67 100644
+--- a/app/src/main/java/com/lomkich/fxus/Theme.kt
++++ b/app/src/main/java/com/lomkich/fxus/Theme.kt
+@@ -133,6 +133,7 @@ fun FxusTheme(mode: ThemeMode, content: @Composable () -> Unit) {
+             surface = c.surface,
+             surfaceContainer = c.surface, // фон выпадающего списка моделей
+             surfaceVariant = c.user,
++            surfaceTint = Color.Transparent, // без цветного налёта на диалогах и меню
+             primary = c.accent,
+             onPrimary = c.onAccent,
+             onBackground = c.text,
+@@ -146,6 +147,7 @@ fun FxusTheme(mode: ThemeMode, content: @Composable () -> Unit) {
+             surface = c.surface,
+             surfaceContainer = c.surface,
+             surfaceVariant = c.user,
++            surfaceTint = Color.Transparent, // без цветного налёта на диалогах и меню
+             primary = c.accent,
+             onPrimary = c.onAccent,
+             onBackground = c.text,
+diff --git a/app/src/main/java/com/lomkich/fxus/ThemeReveal.kt b/app/src/main/java/com/lomkich/fxus/ThemeReveal.kt
+new file mode 100644
+index 0000000..23b718e
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/ThemeReveal.kt
+@@ -0,0 +1,126 @@
++package com.lomkich.fxus
++
++import android.app.Activity
++import android.content.Context
++import android.content.ContextWrapper
++import android.graphics.Bitmap
++import android.os.Handler
++import android.os.Looper
++import android.view.PixelCopy
++import androidx.compose.animation.core.Animatable
++import androidx.compose.animation.core.FastOutSlowInEasing
++import androidx.compose.animation.core.tween
++import androidx.compose.foundation.Canvas
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.CompositionLocalProvider
++import androidx.compose.runtime.compositionLocalOf
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.runtime.rememberUpdatedState
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.geometry.Offset
++import androidx.compose.ui.graphics.BlendMode
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.CompositingStrategy
++import androidx.compose.ui.graphics.ImageBitmap
++import androidx.compose.ui.graphics.asImageBitmap
++import androidx.compose.ui.graphics.graphicsLayer
++import androidx.compose.ui.platform.LocalView
++import androidx.compose.ui.unit.IntSize
++import kotlinx.coroutines.launch
++import kotlin.math.hypot
++import kotlin.math.max
++
++/**
++ * Запрос на смену темы с круговой анимацией. Аргумент: центр круга в координатах окна (px),
++ * обычно центр нажатой кнопки. Без хоста ThemeReveal ничего не делает.
++ */
++val LocalThemeToggle = compositionLocalOf<(Offset) -> Unit> { { } }
++
++private fun Context.findActivity(): Activity? {
++    var c: Context? = this
++    while (c is ContextWrapper) {
++        if (c is Activity) return c
++        c = c.baseContext
++    }
++    return null
++}
++
++/**
++ * Как View Transition с круговой маской в вебе: снимаем кадр окна со старой темой, включаем
++ * новую, а сверху рисуем старый кадр с дырой. Дыра растёт от кнопки и открывает новую тему.
++ * Если снимок не получился, тема просто переключается без анимации.
++ */
++@Composable
++fun ThemeReveal(
++    isDark: Boolean,
++    onSetTheme: (ThemeMode) -> Unit,
++    content: @Composable () -> Unit,
++) {
++    val view = LocalView.current
++    val scope = rememberCoroutineScope()
++    val dark by rememberUpdatedState(isDark)
++    val setTheme by rememberUpdatedState(onSetTheme)
++    var snapshot by remember { mutableStateOf<ImageBitmap?>(null) }
++    var center by remember { mutableStateOf(Offset.Zero) }
++    var running by remember { mutableStateOf(false) }
++    val radius = remember { Animatable(0f) }
++
++    val toggle: (Offset) -> Unit = remember {
++        { origin ->
++            if (!running) {
++                running = true
++                val target = if (dark) ThemeMode.LIGHT else ThemeMode.DARK
++                val w = view.width
++                val h = view.height
++                val window = view.context.findActivity()?.window
++                if (window == null || w <= 0 || h <= 0) {
++                    setTheme(target)
++                    running = false
++                } else {
++                    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
++                    PixelCopy.request(window, bmp, { result ->
++                        if (result == PixelCopy.SUCCESS) {
++                            snapshot = bmp.asImageBitmap()
++                            center = origin
++                            setTheme(target)
++                            val reach = hypot(max(origin.x, w - origin.x), max(origin.y, h - origin.y))
++                            scope.launch {
++                                radius.snapTo(0f)
++                                radius.animateTo(reach, tween(550, easing = FastOutSlowInEasing))
++                                snapshot = null
++                                running = false
++                            }
++                        } else {
++                            setTheme(target)
++                            running = false
++                        }
++                    }, Handler(Looper.getMainLooper()))
++                }
++            }
++        }
++    }
++
++    CompositionLocalProvider(LocalThemeToggle provides toggle) {
++        Box(Modifier.fillMaxSize()) {
++            content()
++            val snap = snapshot
++            if (snap != null) {
++                // Offscreen нужен, чтобы BlendMode.Clear вырезал дыру только в этом слое
++                Canvas(
++                    Modifier
++                        .fillMaxSize()
++                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen },
++                ) {
++                    drawImage(snap, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
++                    drawCircle(Color.Black, radius = radius.value, center = center, blendMode = BlendMode.Clear)
++                }
++            }
++        }
++    }
++}

@@ -133,6 +133,7 @@ fun FxusTheme(mode: ThemeMode, content: @Composable () -> Unit) {
             surface = c.surface,
             surfaceContainer = c.surface, // фон выпадающего списка моделей
             surfaceVariant = c.user,
+            surfaceTint = Color.Transparent, // без цветного налёта на диалогах и меню
             primary = c.accent,
             onPrimary = c.onAccent,
             onBackground = c.text,
@@ -146,6 +147,7 @@ fun FxusTheme(mode: ThemeMode, content: @Composable () -> Unit) {
             surface = c.surface,
             surfaceContainer = c.surface,
             surfaceVariant = c.user,
+            surfaceTint = Color.Transparent, // без цветного налёта на диалогах и меню
             primary = c.accent,
             onPrimary = c.onAccent,
             onBackground = c.text,

@@ -44,7 +44,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-enum class Screen { CHAT, CHATS, ARTIFACTS, SETTINGS }
+enum class Screen { CHAT, CHATS, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
 
 /**
  * Два слоя: меню лежит сзади, экран (чат/настройки/заглушки) сверху.
@@ -77,7 +77,7 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
         drawerOpen = true
     }
 
-    // из настроек выходим в меню (оттуда пришли), из остальных экранов в чат
+    // из настроек, языка и помощи выходим в меню (оттуда пришли), из остальных экранов в чат
     fun leaveSettings() {
         screen = Screen.CHAT
         openDrawer()
@@ -86,7 +86,7 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
     BackHandler(enabled = drawerOpen || screen != Screen.CHAT) {
         when {
             drawerOpen -> drawerOpen = false
-            screen == Screen.SETTINGS -> leaveSettings()
+            screen == Screen.SETTINGS || screen == Screen.LANGUAGE || screen == Screen.HELP -> leaveSettings()
             else -> screen = Screen.CHAT
         }
     }
@@ -186,6 +186,8 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                     go(Screen.CHAT)
                 },
                 onProfile = { go(Screen.SETTINGS) },
+                onLanguage = { go(Screen.LANGUAGE) },
+                onHelp = { go(Screen.HELP) },
             )
         }
 
@@ -219,6 +221,8 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                         )
                         Screen.ARTIFACTS -> ComingSoon("Артефакты") { screen = Screen.CHAT }
                         Screen.SETTINGS -> SettingsScreen(vm, onBack = ::leaveSettings)
+                        Screen.LANGUAGE -> ComingSoon("Язык", onBack = ::leaveSettings)
+                        Screen.HELP -> HelpScreen(onBack = ::leaveSettings)
                         Screen.CHAT -> Unit
                     }
                 }

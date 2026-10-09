@@ -62,9 +62,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Через сколько минут простоя Termux гасит сервер (0 = не гасить). Уходит в скрипт запуска. */
     var idleMinutes by mutableStateOf(prefs.getInt("idle_min", 10))
         private set
-    /** Тема оформления: авто (как в системе), светлая или тёмная. Применяется сразу, без «Сохранить». */
+    /** Тема оформления. По умолчанию тёмная; переключается кнопкой в настройках, применяется сразу. */
     var themeMode by mutableStateOf(
-        runCatching { ThemeMode.valueOf(prefs.getString("theme", "").orEmpty()) }.getOrDefault(ThemeMode.AUTO)
+        runCatching { ThemeMode.valueOf(prefs.getString("theme", "").orEmpty()) }.getOrDefault(ThemeMode.DARK)
     )
         private set
     /** Список сохранённых чатов, свежие сверху. */

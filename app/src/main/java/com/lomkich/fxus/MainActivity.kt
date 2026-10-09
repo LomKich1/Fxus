@@ -26,7 +26,9 @@ class MainActivity : ComponentActivity() {
                 onDispose { }
             }
 
-            FxusTheme(mode) { FxusApp(vm) }
+            ThemeReveal(isDark = dark, onSetTheme = vm::setTheme) {
+                FxusTheme(mode) { FxusApp(vm) }
+            }
         }
     }
 }

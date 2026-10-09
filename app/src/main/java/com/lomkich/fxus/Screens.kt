@@ -30,7 +30,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -39,7 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun TopBar(title: String, onBack: () -> Unit) {
+fun TopBar(title: String, onBack: () -> Unit, trailing: @Composable () -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onBack),
@@ -47,7 +49,32 @@ fun TopBar(title: String, onBack: () -> Unit) {
         ) {
             Text("←", color = ColText, fontSize = 22.sp)
         }
-        Text(title, color = ColText, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+        Text(
+            title,
+            color = ColText,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 8.dp).weight(1f),
+        )
+        trailing()
+    }
+}
+
+/** Солнце в тёмной теме (нажать: станет светлой), луна в светлой. Круг анимации растёт из центра кнопки. */
+@Composable
+private fun ThemeToggleButton() {
+    val toggle = LocalThemeToggle.current
+    val dark = LocalFxusColors.current.dark
+    var center by remember { mutableStateOf(Offset.Zero) }
+    Box(
+        Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .onGloballyPositioned { center = it.boundsInWindow().center }
+            .clickable { toggle(center) },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (dark) SunIcon() else MoonIcon()
     }
 }
 
@@ -77,15 +104,13 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        TopBar("Настройки", onBack)
+        TopBar("Настройки", onBack) { ThemeToggleButton() }
         Column(
             Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            ThemePicker(vm.themeMode, vm::setTheme)
-            Spacer(Modifier.height(20.dp))
             Field(
                 label = "Адрес сервера Ollama",
                 value = host,
@@ -168,44 +193,6 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
             }
             if (saved) {
                 Text("Сохранено", color = ColMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp, start = 4.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun ThemePicker(current: ThemeMode, onPick: (ThemeMode) -> Unit) {
-    Column {
-        Text("Тема", color = ColMuted, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(ColSurface)
-                .padding(4.dp),
-        ) {
-            listOf(
-                ThemeMode.AUTO to "Авто",
-                ThemeMode.LIGHT to "Светлая",
-                ThemeMode.DARK to "Тёмная",
-            ).forEach { (mode, label) ->
-                val selected = mode == current
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (selected) ColUser else Color.Transparent)
-                        .clickable { onPick(mode) }
-                        .padding(vertical = 10.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        label,
-                        color = if (selected) ColText else ColMuted,
-                        fontSize = 15.sp,
-                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                    )
-                }
             }
         }
     }
