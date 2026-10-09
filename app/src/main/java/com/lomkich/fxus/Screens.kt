@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -62,6 +65,8 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
     var host by rememberSaveable { mutableStateOf(vm.host) }
     var nick by rememberSaveable { mutableStateOf(vm.nick) }
     var system by rememberSaveable { mutableStateOf(vm.systemPrompt) }
+    var auto by rememberSaveable { mutableStateOf(vm.autoStart) }
+    var idle by rememberSaveable { mutableStateOf(vm.idleMinutes.toString()) }
     var saved by remember { mutableStateOf(false) }
 
     val status: String? = when {
@@ -84,6 +89,46 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 onChange = { host = it; saved = false },
                 hint = status,
                 keyboardType = KeyboardType.Uri,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(ColSurface)
+                    .clickable { auto = !auto; saved = false }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Запускать Ollama автоматически", color = ColText, fontSize = 16.sp)
+                    Text(
+                        "При открытии приложения и при отправке сообщения, если сервер не отвечает. Только для локального адреса.",
+                        color = ColMuted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(
+                    checked = auto,
+                    onCheckedChange = { auto = it; saved = false },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = ColBg,
+                        checkedTrackColor = ColAccent,
+                        uncheckedThumbColor = ColMuted,
+                        uncheckedTrackColor = ColSurface,
+                        uncheckedBorderColor = ColUser,
+                    ),
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            Field(
+                label = "Остановка при простое, минут",
+                value = idle,
+                onChange = { idle = it.filter(Char::isDigit).take(3); saved = false },
+                hint = "0 = не останавливать. Работает для сервера, который запустил Fxus, действует со следующего запуска.",
+                keyboardType = KeyboardType.Number,
             )
             Spacer(Modifier.height(20.dp))
             Field(
@@ -110,7 +155,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                     .clip(RoundedCornerShape(24.dp))
                     .background(ColAccent)
                     .clickable {
-                        vm.saveSettings(nick, host, system)
+                        vm.saveSettings(nick, host, system, auto, idle.toIntOrNull() ?: vm.idleMinutes)
                         saved = true
                     }
                     .padding(horizontal = 28.dp),
