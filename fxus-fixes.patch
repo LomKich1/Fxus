@@ -1,0 +1,188 @@
+diff --git a/app/src/main/java/com/lomkich/fxus/App.kt b/app/src/main/java/com/lomkich/fxus/App.kt
+index 6e5abdb..0e1150c 100644
+--- a/app/src/main/java/com/lomkich/fxus/App.kt
++++ b/app/src/main/java/com/lomkich/fxus/App.kt
+@@ -2,6 +2,8 @@ package com.lomkich.fxus
+ 
+ import androidx.activity.compose.BackHandler
+ import androidx.compose.animation.core.Animatable
++import androidx.compose.animation.core.Spring
++import androidx.compose.animation.core.spring
+ import androidx.compose.animation.core.tween
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.gestures.awaitEachGesture
+@@ -31,9 +33,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clip
++import androidx.compose.ui.geometry.Offset
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.input.pointer.pointerInput
+ import androidx.compose.ui.input.pointer.positionChange
++import androidx.compose.ui.input.pointer.util.VelocityTracker
+ import androidx.compose.ui.ExperimentalComposeUiApi
+ import androidx.compose.ui.platform.LocalDensity
+ import androidx.compose.ui.platform.LocalFocusManager
+@@ -63,8 +67,17 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+     val progress = remember { Animatable(if (drawerOpen) 1f else 0f) }
+     val scope = rememberCoroutineScope()
+ 
++    // Скорость, с которой отпустили палец (в долях ширины меню в секунду): пружина её подхватывает,
++    // поэтому меню доезжает так, как его бросили, а не с места.
++    val release = remember { FloatArray(1) }
++    val settleSpec = remember { spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 380f) }
++    // быстрее этого (dp в секунду) жест считается броском, и решает его направление
++    val flingPx = with(LocalDensity.current) { 500.dp.toPx() }
++
+     LaunchedEffect(drawerOpen) {
+-        progress.animateTo(if (drawerOpen) 1f else 0f, tween(300))
++        val v = release[0]
++        release[0] = 0f
++        progress.animateTo(if (drawerOpen) 1f else 0f, settleSpec, v)
+     }
+ 
+     val focus = LocalFocusManager.current
+@@ -91,17 +104,20 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+         }
+     }
+ 
+-    // Отпустили палец: решает направление последнего движения, а если палец стоял, то проходит ли меню половину пути.
+-    fun settleMenu(pos: Float, last: Float) {
++    // Отпустили палец. Бросок (быстрее порога) решает направление, медленный жест решает положение
++    // с небольшим упреждением по скорости: чуть не дотянул, но двигал вперёд, значит откроется.
++    fun settleMenu(pos: Float, velocity: Float, drawerPx: Float) {
+         val target = when {
+-            last < -1f -> false
+-            last > 1f -> true
+-            else -> pos > 0.5f
++            velocity > flingPx -> true
++            velocity < -flingPx -> false
++            else -> pos + velocity / drawerPx * 0.15f > 0.5f
+         }
++        val v = velocity / drawerPx
+         if (target != drawerOpen) {
++            release[0] = v
+             drawerOpen = target
+         } else {
+-            scope.launch { progress.animateTo(if (target) 1f else 0f, tween(200)) }
++            scope.launch { progress.animateTo(if (target) 1f else 0f, settleSpec, v) }
+         }
+     }
+ 
+@@ -114,22 +130,28 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+         val drawerWidth = maxWidth * 0.82f
+         val drawerPx = with(LocalDensity.current) { drawerWidth.toPx() }
+ 
+-        // Палец ведёт меню за собой. Отпустили: решает направление последнего движения,
+-        // а если палец стоял, то проходит ли меню половину пути.
++        // Палец ведёт меню за собой. Скорость считаем по накопленному сдвигу, а не по координатам:
++        // сам слой с экраном едет вместе с пальцем, и локальные координаты почти не меняются.
+         val dragMenu = Modifier.pointerInput(drawerPx) {
+             var pos = 0f
+-            var last = 0f
+-            fun settle() {
+-                settleMenu(pos, last)
+-                last = 0f
++            var acc = 0f
++            val tracker = VelocityTracker()
++            fun settle(cancelled: Boolean) {
++                val v = if (cancelled) 0f else tracker.calculateVelocity().x
++                settleMenu(pos, v, drawerPx)
+             }
+             detectHorizontalDragGestures(
+-                onDragStart = { pos = progress.value },
+-                onDragEnd = { settle() },
+-                onDragCancel = { settle() },
++                onDragStart = {
++                    pos = progress.value
++                    acc = 0f
++                    tracker.resetTracking()
++                },
++                onDragEnd = { settle(false) },
++                onDragCancel = { settle(true) },
+                 onHorizontalDrag = { change, dx ->
+                     change.consume()
+-                    last = dx
++                    acc += dx
++                    tracker.addPosition(change.uptimeMillis, Offset(acc, 0f))
+                     pos = (pos + dx / drawerPx).coerceIn(0f, 1f)
+                     scope.launch { progress.snapTo(pos) }
+                 },
+@@ -155,16 +177,19 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+                 focus.clearFocus()
+                 keyboard?.hide()
+                 var pos = (overSlop / drawerPx).coerceIn(0f, 1f)
+-                var last = overSlop
++                var acc = overSlop
++                val tracker = VelocityTracker()
++                tracker.addPosition(first.uptimeMillis, Offset(acc, 0f))
+                 scope.launch { progress.snapTo(pos) }
+                 horizontalDrag(first.id) { change ->
+                     val dx = change.positionChange().x
+                     change.consume()
+-                    last = dx
++                    acc += dx
++                    tracker.addPosition(change.uptimeMillis, Offset(acc, 0f))
+                     pos = (pos + dx / drawerPx).coerceIn(0f, 1f)
+                     scope.launch { progress.snapTo(pos) }
+                 }
+-                settleMenu(pos, last)
++                settleMenu(pos, tracker.calculateVelocity().x, drawerPx)
+             }
+         }
+ 
+diff --git a/app/src/main/java/com/lomkich/fxus/Drawer.kt b/app/src/main/java/com/lomkich/fxus/Drawer.kt
+index e2fcf4f..2c10362 100644
+--- a/app/src/main/java/com/lomkich/fxus/Drawer.kt
++++ b/app/src/main/java/com/lomkich/fxus/Drawer.kt
+@@ -100,21 +100,21 @@ fun DrawerContent(
+                     Modifier
+                         .clip(RoundedCornerShape(26.dp))
+                         .clickable { menu = true }
+-                        .padding(end = 14.dp),
++                        .padding(end = 10.dp),
+                     verticalAlignment = Alignment.CenterVertically,
+                 ) {
+-                    Avatar(nick, 52.dp)
+-                    Spacer(Modifier.width(10.dp))
++                    Avatar(nick, 46.dp)
++                    Spacer(Modifier.width(8.dp))
+                     Text(
+                         nick.ifBlank { "Профиль" },
+                         color = ColText,
+-                        fontSize = 16.sp,
++                        fontSize = 15.sp,
+                         maxLines = 1,
+                         overflow = TextOverflow.Ellipsis,
+                         modifier = Modifier.weight(1f, fill = false),
+                     )
+-                    Spacer(Modifier.width(6.dp))
+-                    ChevronIcon(up = true)
++                    Spacer(Modifier.width(4.dp))
++                    ChevronIcon(up = true, size = 12.dp)
+                 }
+                 ProfileMenu(
+                     expanded = menu,
+@@ -124,17 +124,17 @@ fun DrawerContent(
+                     onHelp = onHelp,
+                 )
+             }
+-            Spacer(Modifier.width(8.dp))
++            Spacer(Modifier.width(6.dp))
+             Box(
+                 Modifier
+-                    .height(52.dp)
+-                    .clip(RoundedCornerShape(26.dp))
++                    .height(48.dp)
++                    .clip(RoundedCornerShape(24.dp))
+                     .background(ColAccent)
+                     .clickable(onClick = onNewChat)
+-                    .padding(horizontal = 22.dp),
++                    .padding(horizontal = 18.dp),
+                 contentAlignment = Alignment.Center,
+             ) {
+-                Text("+  Новый чат", color = ColOnAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
++                Text("+  Новый чат", color = ColOnAccent, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+             }
+         }
+     }

@@ -100,21 +100,21 @@ fun DrawerContent(
                     Modifier
                         .clip(RoundedCornerShape(26.dp))
                         .clickable { menu = true }
-                        .padding(end = 14.dp),
+                        .padding(end = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Avatar(nick, 52.dp)
-                    Spacer(Modifier.width(10.dp))
+                    Avatar(nick, 46.dp)
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         nick.ifBlank { "Профиль" },
                         color = ColText,
-                        fontSize = 16.sp,
+                        fontSize = 15.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    Spacer(Modifier.width(6.dp))
-                    ChevronIcon(up = true)
+                    Spacer(Modifier.width(4.dp))
+                    ChevronIcon(up = true, size = 12.dp)
                 }
                 ProfileMenu(
                     expanded = menu,
@@ -124,17 +124,17 @@ fun DrawerContent(
                     onHelp = onHelp,
                 )
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(6.dp))
             Box(
                 Modifier
-                    .height(52.dp)
-                    .clip(RoundedCornerShape(26.dp))
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(24.dp))
                     .background(ColAccent)
                     .clickable(onClick = onNewChat)
-                    .padding(horizontal = 22.dp),
+                    .padding(horizontal = 18.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("+  Новый чат", color = ColOnAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Text("+  Новый чат", color = ColOnAccent, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             }
         }
     }
