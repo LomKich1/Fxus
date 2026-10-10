@@ -1,0 +1,569 @@
+diff --git a/app/src/main/java/com/lomkich/fxus/App.kt b/app/src/main/java/com/lomkich/fxus/App.kt
+index aa531f9..7244508 100644
+--- a/app/src/main/java/com/lomkich/fxus/App.kt
++++ b/app/src/main/java/com/lomkich/fxus/App.kt
+@@ -2,6 +2,7 @@ package com.lomkich.fxus
+ 
+ import androidx.activity.compose.BackHandler
+ import androidx.compose.animation.core.Animatable
++import androidx.compose.animation.core.FastOutSlowInEasing
+ import androidx.compose.animation.core.Spring
+ import androidx.compose.animation.core.spring
+ import androidx.compose.animation.core.tween
+@@ -46,14 +47,16 @@ import androidx.compose.ui.unit.IntOffset
+ import androidx.compose.ui.unit.dp
+ import androidx.lifecycle.viewmodel.compose.viewModel
+ import com.lomkich.fxus.comfy.ComfyViewModel
++import com.lomkich.fxus.comfy.GalleryHost
+ import com.lomkich.fxus.comfy.ImageChatScreen
+ import kotlinx.coroutines.launch
+ import kotlin.math.roundToInt
+ 
+-enum class Screen { CHAT, CHATS, IMAGES, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
++enum class Screen { CHAT, CHATS, IMAGES, GALLERY, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
+ 
+ /**
+- * Два слоя: меню лежит сзади, экран (чат/настройки/заглушки) сверху.
++ * Три слоя: меню лежит сзади, главный экран (чат или картинки) над ним, а вторичные экраны
++ * (чаты, галерея, настройки, язык, помощь) выезжают слева поверх всего, не закрывая меню.
+  * Открытие меню = слой с экраном плавно уезжает вправо.
+  * Закрыть меню: свайп влево по меню или по сдвинутому экрану.
+  * Открыть меню: свайп вправо по чату (только быстрый: если палец сначала зажали дольше
+@@ -65,8 +68,8 @@ enum class Screen { CHAT, CHATS, IMAGES, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
+ fun FxusApp(vm: ChatViewModel = viewModel()) {
+     var screen by rememberSaveable { mutableStateOf(Screen.CHAT) }
+     var drawerOpen by rememberSaveable { mutableStateOf(false) }
+-    // пункт меню «Галерея»: экран картинок откроется сразу с галереей (флаг сбрасывает сам экран)
+-    var openGallery by remember { mutableStateOf(false) }
++    // Вторичные экраны (чаты, галерея, настройки...) выезжают слева поверх открытого меню и его не закрывают.
++    var overlay by rememberSaveable { mutableStateOf<Screen?>(null) }
+     // 0 = меню закрыто, 1 = открыто. Animatable, потому что палец тоже двигает значение.
+     val progress = remember { Animatable(if (drawerOpen) 1f else 0f) }
+     val scope = rememberCoroutineScope()
+@@ -84,6 +87,20 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+         progress.animateTo(if (drawerOpen) 1f else 0f, settleSpec, v)
+     }
+ 
++    // Ушедший экран рисуем до конца анимации выезда, поэтому держим его отдельно в overlayShown.
++    val overlayProgress = remember { Animatable(if (overlay != null) 1f else 0f) }
++    var overlayShown by remember { mutableStateOf(overlay) }
++    LaunchedEffect(overlay) {
++        val target = overlay
++        if (target != null) {
++            overlayShown = target
++            overlayProgress.animateTo(1f, tween(320, easing = FastOutSlowInEasing))
++        } else {
++            overlayProgress.animateTo(0f, tween(300, easing = FastOutSlowInEasing))
++            overlayShown = null
++        }
++    }
++
+     val focus = LocalFocusManager.current
+     val keyboard = LocalSoftwareKeyboardController.current
+ 
+@@ -94,16 +111,17 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+         drawerOpen = true
+     }
+ 
+-    // из настроек, языка и помощи выходим в меню (оттуда пришли), из остальных экранов в чат
+-    fun leaveSettings() {
+-        screen = Screen.CHAT
+-        openDrawer()
++    // Экран поверх меню: открыли, меню под ним остаётся; закрыли, он уезжает влево и меню снова видно.
++    fun openOverlay(target: Screen) {
++        focus.clearFocus()
++        keyboard?.hide()
++        overlay = target
+     }
+ 
+-    BackHandler(enabled = drawerOpen || screen != Screen.CHAT) {
++    BackHandler(enabled = overlay != null || drawerOpen || screen != Screen.CHAT) {
+         when {
++            overlay != null -> overlay = null
+             drawerOpen -> drawerOpen = false
+-            screen == Screen.SETTINGS || screen == Screen.LANGUAGE || screen == Screen.HELP -> leaveSettings()
+             else -> screen = Screen.CHAT
+         }
+     }
+@@ -125,8 +143,10 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+         }
+     }
+ 
++    // Переход на главный экран (чат или картинки): меню закрывается, экран поверх него тоже уходит.
+     fun go(target: Screen) {
+         screen = target
++        overlay = null
+         drawerOpen = false
+     }
+ 
+@@ -162,12 +182,12 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+             )
+         }
+ 
+-        // Открытие свайпом вправо по чату. Стоит на слое чата и ловит жест после детей:
++        // Открытие свайпом вправо по чату и экрану картинок. Стоит на слое экрана и ловит жест после детей:
+         // если вложенный скролл (список, код) забрал жест, мы его не видим как свободный.
+         val openSwipe = Modifier.pointerInput(drawerPx) {
+             awaitEachGesture {
+                 val down = awaitFirstDown(requireUnconsumed = false)
+-                if (screen != Screen.CHAT || drawerOpen) return@awaitEachGesture
++                if (overlay != null || drawerOpen) return@awaitEachGesture
+                 var overSlop = 0f
+                 // не успели сдвинуться за время long-press = зажатие, не свайп (выделение текста)
+                 val first = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+@@ -208,23 +228,17 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+                 },
+                 onRenameChat = vm::renameChat,
+                 onDeleteChat = vm::deleteChat,
+-                onChats = { go(Screen.CHATS) },
+-                onArtifacts = { go(Screen.ARTIFACTS) },
+-                onImages = {
+-                    openGallery = false
+-                    go(Screen.IMAGES)
+-                },
+-                onGallery = {
+-                    openGallery = true
+-                    go(Screen.IMAGES)
+-                },
++                onChats = { openOverlay(Screen.CHATS) },
++                onArtifacts = { openOverlay(Screen.ARTIFACTS) },
++                onImages = { go(Screen.IMAGES) },
++                onGallery = { openOverlay(Screen.GALLERY) },
+                 onNewChat = {
+                     vm.newChat()
+                     go(Screen.CHAT)
+                 },
+-                onProfile = { go(Screen.SETTINGS) },
+-                onLanguage = { go(Screen.LANGUAGE) },
+-                onHelp = { go(Screen.HELP) },
++                onProfile = { openOverlay(Screen.SETTINGS) },
++                onLanguage = { openOverlay(Screen.LANGUAGE) },
++                onHelp = { openOverlay(Screen.HELP) },
+             )
+         }
+ 
+@@ -236,42 +250,13 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+                 .background(ColBg)
+                 .then(openSwipe)
+         ) {
+-            if (screen == Screen.CHAT) {
+-                // чат сам рисует контент под системными панелями и сам обрабатывает отступы
+-                ChatScreen(vm, onMenu = ::openDrawer)
+-            } else if (screen == Screen.IMAGES) {
++            if (screen == Screen.IMAGES) {
+                 // экран картинок, как и чат, сам рисует под системными панелями и сам берёт отступы
+                 val comfy: ComfyViewModel = viewModel()
+-                ImageChatScreen(
+-                    comfy,
+-                    onMenu = ::openDrawer,
+-                    openGallery = openGallery,
+-                    onGalleryHandled = { openGallery = false },
+-                )
++                ImageChatScreen(comfy, onMenu = ::openDrawer)
+             } else {
+-                Column(
+-                    Modifier
+-                        .fillMaxSize()
+-                        .statusBarsPadding()
+-                        .navigationBarsPadding()
+-                        .imePadding()
+-                ) {
+-                    when (screen) {
+-                        Screen.CHATS -> ChatsScreen(
+-                            vm,
+-                            onOpen = { id ->
+-                                vm.openChat(id)
+-                                screen = Screen.CHAT
+-                            },
+-                            onBack = { screen = Screen.CHAT },
+-                        )
+-                        Screen.ARTIFACTS -> ComingSoon("Артефакты") { screen = Screen.CHAT }
+-                        Screen.SETTINGS -> SettingsScreen(vm, onBack = ::leaveSettings)
+-                        Screen.LANGUAGE -> ComingSoon("Язык", onBack = ::leaveSettings)
+-                        Screen.HELP -> HelpScreen(onBack = ::leaveSettings)
+-                        Screen.CHAT, Screen.IMAGES -> Unit
+-                    }
+-                }
++                // чат сам рисует контент под системными панелями и сам обрабатывает отступы
++                ChatScreen(vm, onMenu = ::openDrawer)
+             }
+             // Пока меню открыто: тап по сдвинутому экрану закрывает, свайп влево тоже.
+             // dragMenu стоит последним в цепочке (внутренний), чтобы свайп забирал жест раньше тапа.
+@@ -285,5 +270,49 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+                 )
+             }
+         }
++
++        // Экран поверх меню. Выезжает слева направо, а уходит обратно влево; меню под ним не закрывается.
++        val shownOverlay = overlayShown
++        if (shownOverlay != null) {
++            val fullPx = with(LocalDensity.current) { maxWidth.toPx() }
++            Box(
++                Modifier
++                    .fillMaxSize()
++                    .offset { IntOffset((-(1f - overlayProgress.value) * fullPx).roundToInt(), 0) }
++                    .background(ColBg)
++                    // экран лежит поверх меню, нажатия в пустых местах не должны проваливаться вниз
++                    .pointerInput(Unit) { detectTapGestures { } }
++            ) {
++                if (shownOverlay == Screen.GALLERY) {
++                    // галерея сама берёт отступы под системные панели
++                    val comfy: ComfyViewModel = viewModel()
++                    GalleryHost(comfy, onClose = { overlay = null })
++                } else {
++                    Column(
++                        Modifier
++                            .fillMaxSize()
++                            .statusBarsPadding()
++                            .navigationBarsPadding()
++                            .imePadding()
++                    ) {
++                        when (shownOverlay) {
++                            Screen.CHATS -> ChatsScreen(
++                                vm,
++                                onOpen = { id ->
++                                    vm.openChat(id)
++                                    go(Screen.CHAT)
++                                },
++                                onBack = { overlay = null },
++                            )
++                            Screen.ARTIFACTS -> ComingSoon("Артефакты") { overlay = null }
++                            Screen.SETTINGS -> SettingsScreen(vm, onBack = { overlay = null })
++                            Screen.LANGUAGE -> ComingSoon("Язык") { overlay = null }
++                            Screen.HELP -> HelpScreen(onBack = { overlay = null })
++                            else -> Unit
++                        }
++                    }
++                }
++            }
++        }
+     }
+ }
+diff --git a/app/src/main/java/com/lomkich/fxus/Drawer.kt b/app/src/main/java/com/lomkich/fxus/Drawer.kt
+index 1d3bd4a..0753b34 100644
+--- a/app/src/main/java/com/lomkich/fxus/Drawer.kt
++++ b/app/src/main/java/com/lomkich/fxus/Drawer.kt
+@@ -20,6 +20,25 @@ import androidx.compose.foundation.lazy.LazyColumn
+ import androidx.compose.foundation.lazy.items
+ import androidx.compose.foundation.shape.CircleShape
+ import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.animation.AnimatedVisibility
++import androidx.compose.animation.core.FastOutSlowInEasing
++import androidx.compose.animation.core.MutableTransitionState
++import androidx.compose.animation.core.tween
++import androidx.compose.animation.fadeIn
++import androidx.compose.animation.fadeOut
++import androidx.compose.animation.scaleIn
++import androidx.compose.animation.scaleOut
++import androidx.compose.foundation.BorderStroke
++import androidx.compose.material3.Surface
++import androidx.compose.ui.graphics.TransformOrigin
++import androidx.compose.ui.platform.LocalDensity
++import androidx.compose.ui.unit.IntOffset
++import androidx.compose.ui.unit.IntRect
++import androidx.compose.ui.unit.IntSize
++import androidx.compose.ui.unit.LayoutDirection
++import androidx.compose.ui.window.Popup
++import androidx.compose.ui.window.PopupPositionProvider
++import androidx.compose.ui.window.PopupProperties
+ import androidx.compose.material3.DropdownMenu
+ import androidx.compose.material3.DropdownMenuItem
+ import androidx.compose.material3.Text
+@@ -144,7 +163,25 @@ fun DrawerContent(
+     }
+ }
+ 
+-/** Выпадающее меню профиля: плотная карточка с иконками, раскрывается вверх, если внизу нет места. */
++/** Ставит окно меню над якорем (над строкой профиля), прижав левым краем к якорю. */
++private class AboveAnchor(private val gapPx: Int) : PopupPositionProvider {
++    override fun calculatePosition(
++        anchorBounds: IntRect,
++        windowSize: IntSize,
++        layoutDirection: LayoutDirection,
++        popupContentSize: IntSize,
++    ): IntOffset {
++        val x = anchorBounds.left.coerceIn(0, maxOf(0, windowSize.width - popupContentSize.width))
++        val y = maxOf(0, anchorBounds.top - popupContentSize.height - gapPx)
++        return IntOffset(x, y)
++    }
++}
++
++/**
++ * Меню профиля: карточка разворачивается из угла у аватара и сворачивается обратно.
++ * Анимация только на слое отрисовки (масштаб + прозрачность), размер окна не меняется,
++ * поэтому позиция не дёргается. Пока играет сворачивание, окно остаётся на экране.
++ */
+ @Composable
+ private fun ProfileMenu(
+     expanded: Boolean,
+@@ -153,37 +190,63 @@ private fun ProfileMenu(
+     onLanguage: () -> Unit,
+     onHelp: () -> Unit,
+ ) {
+-    DropdownMenu(
+-        expanded = expanded,
+-        onDismissRequest = onDismiss,
+-        modifier = Modifier.widthIn(min = 230.dp),
+-        shape = RoundedCornerShape(18.dp),
+-        containerColor = ColSurface,
+-        tonalElevation = 0.dp,
+-        shadowElevation = 8.dp,
+-    ) {
+-        ProfileMenuItem("Настройки", { GearIcon() }) {
+-            onDismiss()
+-            onSettings()
+-        }
+-        ProfileMenuItem("Язык", { GlobeIcon() }) {
+-            onDismiss()
+-            onLanguage()
+-        }
+-        ProfileMenuItem("Помощь", { HelpIcon() }) {
+-            onDismiss()
+-            onHelp()
++    val state = remember { MutableTransitionState(false) }
++    state.targetState = expanded
++    val gap = with(LocalDensity.current) { 8.dp.roundToPx() }
++    val positioner = remember(gap) { AboveAnchor(gap) }
++    val origin = TransformOrigin(0.12f, 1f)
++
++    if (state.currentState || state.targetState) {
++        Popup(
++            popupPositionProvider = positioner,
++            onDismissRequest = onDismiss,
++            properties = PopupProperties(focusable = true),
++        ) {
++            AnimatedVisibility(
++                visibleState = state,
++                enter = fadeIn(tween(140)) +
++                    scaleIn(tween(280, easing = FastOutSlowInEasing), initialScale = 0.25f, transformOrigin = origin),
++                exit = fadeOut(tween(130)) +
++                    scaleOut(tween(200, easing = FastOutSlowInEasing), targetScale = 0.25f, transformOrigin = origin),
++            ) {
++                Surface(
++                    shape = RoundedCornerShape(18.dp),
++                    color = ColSurface,
++                    border = BorderStroke(1.dp, ColUser),
++                ) {
++                    Column(Modifier.width(240.dp).padding(vertical = 6.dp)) {
++                        ProfileMenuItem("Настройки", { GearIcon() }) {
++                            onDismiss()
++                            onSettings()
++                        }
++                        ProfileMenuItem("Язык", { GlobeIcon() }) {
++                            onDismiss()
++                            onLanguage()
++                        }
++                        ProfileMenuItem("Помощь", { HelpIcon() }) {
++                            onDismiss()
++                            onHelp()
++                        }
++                    }
++                }
++            }
+         }
+     }
+ }
+ 
+ @Composable
+ private fun ProfileMenuItem(label: String, icon: @Composable () -> Unit, onClick: () -> Unit) {
+-    DropdownMenuItem(
+-        text = { Text(label, color = ColText, fontSize = 16.sp) },
+-        leadingIcon = icon,
+-        onClick = onClick,
+-    )
++    Row(
++        Modifier
++            .fillMaxWidth()
++            .clickable(onClick = onClick)
++            .padding(horizontal = 18.dp, vertical = 13.dp),
++        verticalAlignment = Alignment.CenterVertically,
++    ) {
++        icon()
++        Spacer(Modifier.width(14.dp))
++        Text(label, color = ColText, fontSize = 16.sp)
++    }
+ }
+ 
+ @Composable
+diff --git a/app/src/main/java/com/lomkich/fxus/HelpScreen.kt b/app/src/main/java/com/lomkich/fxus/HelpScreen.kt
+index 94cc568..86af3b9 100644
+--- a/app/src/main/java/com/lomkich/fxus/HelpScreen.kt
++++ b/app/src/main/java/com/lomkich/fxus/HelpScreen.kt
+@@ -42,7 +42,7 @@ fun HelpScreen(onBack: () -> Unit) {
+             HelpTitle("Как пользоваться")
+             HelpText("•  Модель выбирается в шапке чата. Внизу того же списка кнопка «Запустить Ollama» или «Остановить Ollama» (только для локального адреса).")
+             HelpText("•  Чаты сохраняются сами. Свежие видны в меню, все на экране «Чаты», там же поиск. Долгий тап по чату: переименовать или удалить.")
+-            HelpText("•  Меню открывается свайпом вправо по чату или кнопкой слева вверху. Новый чат: кнопка внизу меню.")
++            HelpText("•  Меню открывается свайпом вправо по чату и по экрану картинок или кнопкой слева вверху. Новый чат: кнопка внизу меню.")
+             HelpText("•  Ответы показываются с форматированием: списки, таблицы, блоки кода.")
+             HelpText("•  Ник из настроек: модель будет обращаться к тебе по нему.")
+ 
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/GalleryHost.kt b/app/src/main/java/com/lomkich/fxus/comfy/GalleryHost.kt
+new file mode 100644
+index 0000000..948fb53
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/GalleryHost.kt
+@@ -0,0 +1,54 @@
++package com.lomkich.fxus.comfy
++
++import androidx.compose.material3.AlertDialog
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++
++/**
++ * Галерея как самостоятельный экран: сетка картинок, просмотр на весь экран и удаление.
++ * Раньше жила внутри чата картинок, теперь её открывает пункт меню «Галерея».
++ */
++@Composable
++fun GalleryHost(vm: ComfyViewModel, onClose: () -> Unit) {
++    var viewingId by remember { mutableStateOf<Long?>(null) }
++    var confirmDeleteId by remember { mutableStateOf<Long?>(null) }
++
++    MaterialTheme(colorScheme = MaterialTheme.colorScheme, typography = ComfyTypography) {
++        val cs = MaterialTheme.colorScheme
++
++        GalleryScreen(
++            turns = vm.turns,
++            onOpen = { viewingId = it },
++            onDeleteMany = vm::deleteMany,
++            onClose = onClose
++        )
++
++        viewingId?.let { id ->
++            vm.turns.firstOrNull { it.id == id }?.let { t ->
++                ImageViewer(t, onDismiss = { viewingId = null }, onDelete = { confirmDeleteId = id })
++            }
++        }
++
++        confirmDeleteId?.let { id ->
++            AlertDialog(
++                onDismissRequest = { confirmDeleteId = null },
++                title = { Text("Удалить?") },
++                text = { Text("Сообщение и картинка будут удалены без возможности восстановления.") },
++                confirmButton = {
++                    TextButton(onClick = {
++                        vm.delete(id)
++                        if (viewingId == id) viewingId = null
++                        confirmDeleteId = null
++                    }) { Text("Удалить", color = cs.error) }
++                },
++                dismissButton = { TextButton(onClick = { confirmDeleteId = null }) { Text("Отмена") } }
++            )
++        }
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/ImageChatScreen.kt b/app/src/main/java/com/lomkich/fxus/comfy/ImageChatScreen.kt
+index 26ad4d2..0cb281e 100644
+--- a/app/src/main/java/com/lomkich/fxus/comfy/ImageChatScreen.kt
++++ b/app/src/main/java/com/lomkich/fxus/comfy/ImageChatScreen.kt
+@@ -117,34 +117,24 @@ private const val SCRIM_ALPHA = 0.92f
+ private val HEADER_FADE = 28.dp
+ 
+ /** Типографика ComfyChat (засечки в заголовках): действует только внутри экрана картинок. */
+-private val ComfyTypography = Typography(
++internal val ComfyTypography = Typography(
+     headlineSmall = TextStyle(fontFamily = FontFamily.Serif, fontSize = 26.sp, lineHeight = 32.sp),
+     titleLarge = TextStyle(fontFamily = FontFamily.Serif, fontSize = 21.sp, lineHeight = 26.sp)
+ )
+ 
+ /**
+  * Чат генерации изображений (бывший ComfyChat). Цвета берёт из общей темы приложения.
+- * onMenu открывает главное меню; openGallery просит показать галерею, после показа зовём onGalleryHandled.
++ * onMenu открывает главное меню. Галерея теперь отдельный экран приложения (см. GalleryHost).
+  */
+ @Composable
+-fun ImageChatScreen(
+-    vm: ComfyViewModel,
+-    onMenu: () -> Unit,
+-    openGallery: Boolean = false,
+-    onGalleryHandled: () -> Unit = {},
+-) {
++fun ImageChatScreen(vm: ComfyViewModel, onMenu: () -> Unit) {
+     MaterialTheme(colorScheme = MaterialTheme.colorScheme, typography = ComfyTypography) {
+-        ImageChatContent(vm, onMenu, openGallery, onGalleryHandled)
++        ImageChatContent(vm, onMenu)
+     }
+ }
+ 
+ @Composable
+-private fun ImageChatContent(
+-    vm: ComfyViewModel,
+-    onMenu: () -> Unit,
+-    openGallery: Boolean,
+-    onGalleryHandled: () -> Unit,
+-) {
++private fun ImageChatContent(vm: ComfyViewModel, onMenu: () -> Unit) {
+     val cs = MaterialTheme.colorScheme
+     val url by vm.serverUrl.collectAsStateWithLifecycle()
+     val tunnel by vm.tunnel.collectAsStateWithLifecycle()
+@@ -171,26 +161,10 @@ private fun ImageChatContent(
+     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+         if (uri != null) vm.importWorkflow(uri)
+     }
+-    var showGallery by remember { mutableStateOf(false) }
+-    LaunchedEffect(openGallery) {
+-        if (openGallery) {
+-            showGallery = true
+-            onGalleryHandled()
+-        }
+-    }
+     var viewingId by remember { mutableStateOf<Long?>(null) }
+     var confirmDeleteId by remember { mutableStateOf<Long?>(null) }
+     val listState = rememberLazyListState()
+ 
+-    // главный экран слегка уезжает вправо, пока галерея наезжает слева
+-    val shift by animateFloatAsState(
+-        targetValue = if (showGallery) 1f else 0f,
+-        animationSpec = tween(380, easing = FastOutSlowInEasing),
+-        label = "shift"
+-    )
+-
+-    BackHandler(enabled = showGallery) { showGallery = false }
+-
+     LaunchedEffect(vm.turns.size) {
+         if (vm.turns.isNotEmpty()) listState.animateScrollToItem(vm.turns.lastIndex)
+     }
+@@ -201,7 +175,6 @@ private fun ImageChatContent(
+         Box(
+             Modifier
+                 .fillMaxSize()
+-                .graphicsLayer { translationX = shift * size.width * 0.12f }
+                 .imePadding()
+         ) {
+             val density = LocalDensity.current
+@@ -391,29 +364,6 @@ private fun ImageChatContent(
+             }
+         }
+ 
+-        // затемнение главного экрана под галереей
+-        AnimatedVisibility(
+-            visible = showGallery,
+-            enter = fadeIn(tween(380)),
+-            exit = fadeOut(tween(300))
+-        ) {
+-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
+-        }
+-
+-        // галерея наезжает слева
+-        AnimatedVisibility(
+-            visible = showGallery,
+-            enter = slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it },
+-            exit = slideOutHorizontally(tween(300, easing = FastOutSlowInEasing)) { -it }
+-        ) {
+-            GalleryScreen(
+-                turns = vm.turns,
+-                onOpen = { viewingId = it },
+-                onDeleteMany = vm::deleteMany,
+-                onClose = { showGallery = false }
+-            )
+-        }
+-
+         MorphPopup(
+             anchor = settingsAnchor,
+             placement = MorphPlacement.CENTER,

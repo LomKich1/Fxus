@@ -117,34 +117,24 @@ private const val SCRIM_ALPHA = 0.92f
 private val HEADER_FADE = 28.dp
 
 /** Типографика ComfyChat (засечки в заголовках): действует только внутри экрана картинок. */
-private val ComfyTypography = Typography(
+internal val ComfyTypography = Typography(
     headlineSmall = TextStyle(fontFamily = FontFamily.Serif, fontSize = 26.sp, lineHeight = 32.sp),
     titleLarge = TextStyle(fontFamily = FontFamily.Serif, fontSize = 21.sp, lineHeight = 26.sp)
 )
 
 /**
  * Чат генерации изображений (бывший ComfyChat). Цвета берёт из общей темы приложения.
- * onMenu открывает главное меню; openGallery просит показать галерею, после показа зовём onGalleryHandled.
+ * onMenu открывает главное меню. Галерея теперь отдельный экран приложения (см. GalleryHost).
  */
 @Composable
-fun ImageChatScreen(
-    vm: ComfyViewModel,
-    onMenu: () -> Unit,
-    openGallery: Boolean = false,
-    onGalleryHandled: () -> Unit = {},
-) {
+fun ImageChatScreen(vm: ComfyViewModel, onMenu: () -> Unit) {
     MaterialTheme(colorScheme = MaterialTheme.colorScheme, typography = ComfyTypography) {
-        ImageChatContent(vm, onMenu, openGallery, onGalleryHandled)
+        ImageChatContent(vm, onMenu)
     }
 }
 
 @Composable
-private fun ImageChatContent(
-    vm: ComfyViewModel,
-    onMenu: () -> Unit,
-    openGallery: Boolean,
-    onGalleryHandled: () -> Unit,
-) {
+private fun ImageChatContent(vm: ComfyViewModel, onMenu: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val url by vm.serverUrl.collectAsStateWithLifecycle()
     val tunnel by vm.tunnel.collectAsStateWithLifecycle()
@@ -171,25 +161,9 @@ private fun ImageChatContent(
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importWorkflow(uri)
     }
-    var showGallery by remember { mutableStateOf(false) }
-    LaunchedEffect(openGallery) {
-        if (openGallery) {
-            showGallery = true
-            onGalleryHandled()
-        }
-    }
     var viewingId by remember { mutableStateOf<Long?>(null) }
     var confirmDeleteId by remember { mutableStateOf<Long?>(null) }
     val listState = rememberLazyListState()
-
-    // главный экран слегка уезжает вправо, пока галерея наезжает слева
-    val shift by animateFloatAsState(
-        targetValue = if (showGallery) 1f else 0f,
-        animationSpec = tween(380, easing = FastOutSlowInEasing),
-        label = "shift"
-    )
-
-    BackHandler(enabled = showGallery) { showGallery = false }
 
     LaunchedEffect(vm.turns.size) {
         if (vm.turns.isNotEmpty()) listState.animateScrollToItem(vm.turns.lastIndex)
@@ -201,7 +175,6 @@ private fun ImageChatContent(
         Box(
             Modifier
                 .fillMaxSize()
-                .graphicsLayer { translationX = shift * size.width * 0.12f }
                 .imePadding()
         ) {
             val density = LocalDensity.current
@@ -389,29 +362,6 @@ private fun ImageChatContent(
                 }
             }
             }
-        }
-
-        // затемнение главного экрана под галереей
-        AnimatedVisibility(
-            visible = showGallery,
-            enter = fadeIn(tween(380)),
-            exit = fadeOut(tween(300))
-        ) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
-        }
-
-        // галерея наезжает слева
-        AnimatedVisibility(
-            visible = showGallery,
-            enter = slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it },
-            exit = slideOutHorizontally(tween(300, easing = FastOutSlowInEasing)) { -it }
-        ) {
-            GalleryScreen(
-                turns = vm.turns,
-                onOpen = { viewingId = it },
-                onDeleteMany = vm::deleteMany,
-                onClose = { showGallery = false }
-            )
         }
 
         MorphPopup(

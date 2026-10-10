@@ -2,6 +2,7 @@ package com.lomkich.fxus
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -46,14 +47,16 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lomkich.fxus.comfy.ComfyViewModel
+import com.lomkich.fxus.comfy.GalleryHost
 import com.lomkich.fxus.comfy.ImageChatScreen
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-enum class Screen { CHAT, CHATS, IMAGES, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
+enum class Screen { CHAT, CHATS, IMAGES, GALLERY, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
 
 /**
- * Два слоя: меню лежит сзади, экран (чат/настройки/заглушки) сверху.
+ * Три слоя: меню лежит сзади, главный экран (чат или картинки) над ним, а вторичные экраны
+ * (чаты, галерея, настройки, язык, помощь) выезжают слева поверх всего, не закрывая меню.
  * Открытие меню = слой с экраном плавно уезжает вправо.
  * Закрыть меню: свайп влево по меню или по сдвинутому экрану.
  * Открыть меню: свайп вправо по чату (только быстрый: если палец сначала зажали дольше
@@ -65,8 +68,8 @@ enum class Screen { CHAT, CHATS, IMAGES, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
 fun FxusApp(vm: ChatViewModel = viewModel()) {
     var screen by rememberSaveable { mutableStateOf(Screen.CHAT) }
     var drawerOpen by rememberSaveable { mutableStateOf(false) }
-    // пункт меню «Галерея»: экран картинок откроется сразу с галереей (флаг сбрасывает сам экран)
-    var openGallery by remember { mutableStateOf(false) }
+    // Вторичные экраны (чаты, галерея, настройки...) выезжают слева поверх открытого меню и его не закрывают.
+    var overlay by rememberSaveable { mutableStateOf<Screen?>(null) }
     // 0 = меню закрыто, 1 = открыто. Animatable, потому что палец тоже двигает значение.
     val progress = remember { Animatable(if (drawerOpen) 1f else 0f) }
     val scope = rememberCoroutineScope()
@@ -84,6 +87,20 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
         progress.animateTo(if (drawerOpen) 1f else 0f, settleSpec, v)
     }
 
+    // Ушедший экран рисуем до конца анимации выезда, поэтому держим его отдельно в overlayShown.
+    val overlayProgress = remember { Animatable(if (overlay != null) 1f else 0f) }
+    var overlayShown by remember { mutableStateOf(overlay) }
+    LaunchedEffect(overlay) {
+        val target = overlay
+        if (target != null) {
+            overlayShown = target
+            overlayProgress.animateTo(1f, tween(320, easing = FastOutSlowInEasing))
+        } else {
+            overlayProgress.animateTo(0f, tween(300, easing = FastOutSlowInEasing))
+            overlayShown = null
+        }
+    }
+
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -94,16 +111,17 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
         drawerOpen = true
     }
 
-    // из настроек, языка и помощи выходим в меню (оттуда пришли), из остальных экранов в чат
-    fun leaveSettings() {
-        screen = Screen.CHAT
-        openDrawer()
+    // Экран поверх меню: открыли, меню под ним остаётся; закрыли, он уезжает влево и меню снова видно.
+    fun openOverlay(target: Screen) {
+        focus.clearFocus()
+        keyboard?.hide()
+        overlay = target
     }
 
-    BackHandler(enabled = drawerOpen || screen != Screen.CHAT) {
+    BackHandler(enabled = overlay != null || drawerOpen || screen != Screen.CHAT) {
         when {
+            overlay != null -> overlay = null
             drawerOpen -> drawerOpen = false
-            screen == Screen.SETTINGS || screen == Screen.LANGUAGE || screen == Screen.HELP -> leaveSettings()
             else -> screen = Screen.CHAT
         }
     }
@@ -125,8 +143,10 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
         }
     }
 
+    // Переход на главный экран (чат или картинки): меню закрывается, экран поверх него тоже уходит.
     fun go(target: Screen) {
         screen = target
+        overlay = null
         drawerOpen = false
     }
 
@@ -162,12 +182,12 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
             )
         }
 
-        // Открытие свайпом вправо по чату. Стоит на слое чата и ловит жест после детей:
+        // Открытие свайпом вправо по чату и экрану картинок. Стоит на слое экрана и ловит жест после детей:
         // если вложенный скролл (список, код) забрал жест, мы его не видим как свободный.
         val openSwipe = Modifier.pointerInput(drawerPx) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
-                if (screen != Screen.CHAT || drawerOpen) return@awaitEachGesture
+                if (overlay != null || drawerOpen) return@awaitEachGesture
                 var overSlop = 0f
                 // не успели сдвинуться за время long-press = зажатие, не свайп (выделение текста)
                 val first = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
@@ -208,23 +228,17 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                 },
                 onRenameChat = vm::renameChat,
                 onDeleteChat = vm::deleteChat,
-                onChats = { go(Screen.CHATS) },
-                onArtifacts = { go(Screen.ARTIFACTS) },
-                onImages = {
-                    openGallery = false
-                    go(Screen.IMAGES)
-                },
-                onGallery = {
-                    openGallery = true
-                    go(Screen.IMAGES)
-                },
+                onChats = { openOverlay(Screen.CHATS) },
+                onArtifacts = { openOverlay(Screen.ARTIFACTS) },
+                onImages = { go(Screen.IMAGES) },
+                onGallery = { openOverlay(Screen.GALLERY) },
                 onNewChat = {
                     vm.newChat()
                     go(Screen.CHAT)
                 },
-                onProfile = { go(Screen.SETTINGS) },
-                onLanguage = { go(Screen.LANGUAGE) },
-                onHelp = { go(Screen.HELP) },
+                onProfile = { openOverlay(Screen.SETTINGS) },
+                onLanguage = { openOverlay(Screen.LANGUAGE) },
+                onHelp = { openOverlay(Screen.HELP) },
             )
         }
 
@@ -236,42 +250,13 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                 .background(ColBg)
                 .then(openSwipe)
         ) {
-            if (screen == Screen.CHAT) {
-                // чат сам рисует контент под системными панелями и сам обрабатывает отступы
-                ChatScreen(vm, onMenu = ::openDrawer)
-            } else if (screen == Screen.IMAGES) {
+            if (screen == Screen.IMAGES) {
                 // экран картинок, как и чат, сам рисует под системными панелями и сам берёт отступы
                 val comfy: ComfyViewModel = viewModel()
-                ImageChatScreen(
-                    comfy,
-                    onMenu = ::openDrawer,
-                    openGallery = openGallery,
-                    onGalleryHandled = { openGallery = false },
-                )
+                ImageChatScreen(comfy, onMenu = ::openDrawer)
             } else {
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .statusBarsPadding()
-                        .navigationBarsPadding()
-                        .imePadding()
-                ) {
-                    when (screen) {
-                        Screen.CHATS -> ChatsScreen(
-                            vm,
-                            onOpen = { id ->
-                                vm.openChat(id)
-                                screen = Screen.CHAT
-                            },
-                            onBack = { screen = Screen.CHAT },
-                        )
-                        Screen.ARTIFACTS -> ComingSoon("Артефакты") { screen = Screen.CHAT }
-                        Screen.SETTINGS -> SettingsScreen(vm, onBack = ::leaveSettings)
-                        Screen.LANGUAGE -> ComingSoon("Язык", onBack = ::leaveSettings)
-                        Screen.HELP -> HelpScreen(onBack = ::leaveSettings)
-                        Screen.CHAT, Screen.IMAGES -> Unit
-                    }
-                }
+                // чат сам рисует контент под системными панелями и сам обрабатывает отступы
+                ChatScreen(vm, onMenu = ::openDrawer)
             }
             // Пока меню открыто: тап по сдвинутому экрану закрывает, свайп влево тоже.
             // dragMenu стоит последним в цепочке (внутренний), чтобы свайп забирал жест раньше тапа.
@@ -283,6 +268,50 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                         .pointerInput(Unit) { detectTapGestures { drawerOpen = false } }
                         .then(dragMenu)
                 )
+            }
+        }
+
+        // Экран поверх меню. Выезжает слева направо, а уходит обратно влево; меню под ним не закрывается.
+        val shownOverlay = overlayShown
+        if (shownOverlay != null) {
+            val fullPx = with(LocalDensity.current) { maxWidth.toPx() }
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .offset { IntOffset((-(1f - overlayProgress.value) * fullPx).roundToInt(), 0) }
+                    .background(ColBg)
+                    // экран лежит поверх меню, нажатия в пустых местах не должны проваливаться вниз
+                    .pointerInput(Unit) { detectTapGestures { } }
+            ) {
+                if (shownOverlay == Screen.GALLERY) {
+                    // галерея сама берёт отступы под системные панели
+                    val comfy: ComfyViewModel = viewModel()
+                    GalleryHost(comfy, onClose = { overlay = null })
+                } else {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .statusBarsPadding()
+                            .navigationBarsPadding()
+                            .imePadding()
+                    ) {
+                        when (shownOverlay) {
+                            Screen.CHATS -> ChatsScreen(
+                                vm,
+                                onOpen = { id ->
+                                    vm.openChat(id)
+                                    go(Screen.CHAT)
+                                },
+                                onBack = { overlay = null },
+                            )
+                            Screen.ARTIFACTS -> ComingSoon("Артефакты") { overlay = null }
+                            Screen.SETTINGS -> SettingsScreen(vm, onBack = { overlay = null })
+                            Screen.LANGUAGE -> ComingSoon("Язык") { overlay = null }
+                            Screen.HELP -> HelpScreen(onBack = { overlay = null })
+                            else -> Unit
+                        }
+                    }
+                }
             }
         }
     }

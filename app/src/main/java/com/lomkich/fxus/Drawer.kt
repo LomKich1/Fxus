@@ -20,6 +20,25 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
@@ -144,7 +163,25 @@ fun DrawerContent(
     }
 }
 
-/** Выпадающее меню профиля: плотная карточка с иконками, раскрывается вверх, если внизу нет места. */
+/** Ставит окно меню над якорем (над строкой профиля), прижав левым краем к якорю. */
+private class AboveAnchor(private val gapPx: Int) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize,
+    ): IntOffset {
+        val x = anchorBounds.left.coerceIn(0, maxOf(0, windowSize.width - popupContentSize.width))
+        val y = maxOf(0, anchorBounds.top - popupContentSize.height - gapPx)
+        return IntOffset(x, y)
+    }
+}
+
+/**
+ * Меню профиля: карточка разворачивается из угла у аватара и сворачивается обратно.
+ * Анимация только на слое отрисовки (масштаб + прозрачность), размер окна не меняется,
+ * поэтому позиция не дёргается. Пока играет сворачивание, окно остаётся на экране.
+ */
 @Composable
 private fun ProfileMenu(
     expanded: Boolean,
@@ -153,37 +190,63 @@ private fun ProfileMenu(
     onLanguage: () -> Unit,
     onHelp: () -> Unit,
 ) {
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismiss,
-        modifier = Modifier.widthIn(min = 230.dp),
-        shape = RoundedCornerShape(18.dp),
-        containerColor = ColSurface,
-        tonalElevation = 0.dp,
-        shadowElevation = 8.dp,
-    ) {
-        ProfileMenuItem("Настройки", { GearIcon() }) {
-            onDismiss()
-            onSettings()
-        }
-        ProfileMenuItem("Язык", { GlobeIcon() }) {
-            onDismiss()
-            onLanguage()
-        }
-        ProfileMenuItem("Помощь", { HelpIcon() }) {
-            onDismiss()
-            onHelp()
+    val state = remember { MutableTransitionState(false) }
+    state.targetState = expanded
+    val gap = with(LocalDensity.current) { 8.dp.roundToPx() }
+    val positioner = remember(gap) { AboveAnchor(gap) }
+    val origin = TransformOrigin(0.12f, 1f)
+
+    if (state.currentState || state.targetState) {
+        Popup(
+            popupPositionProvider = positioner,
+            onDismissRequest = onDismiss,
+            properties = PopupProperties(focusable = true),
+        ) {
+            AnimatedVisibility(
+                visibleState = state,
+                enter = fadeIn(tween(140)) +
+                    scaleIn(tween(280, easing = FastOutSlowInEasing), initialScale = 0.25f, transformOrigin = origin),
+                exit = fadeOut(tween(130)) +
+                    scaleOut(tween(200, easing = FastOutSlowInEasing), targetScale = 0.25f, transformOrigin = origin),
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = ColSurface,
+                    border = BorderStroke(1.dp, ColUser),
+                ) {
+                    Column(Modifier.width(240.dp).padding(vertical = 6.dp)) {
+                        ProfileMenuItem("Настройки", { GearIcon() }) {
+                            onDismiss()
+                            onSettings()
+                        }
+                        ProfileMenuItem("Язык", { GlobeIcon() }) {
+                            onDismiss()
+                            onLanguage()
+                        }
+                        ProfileMenuItem("Помощь", { HelpIcon() }) {
+                            onDismiss()
+                            onHelp()
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun ProfileMenuItem(label: String, icon: @Composable () -> Unit, onClick: () -> Unit) {
-    DropdownMenuItem(
-        text = { Text(label, color = ColText, fontSize = 16.sp) },
-        leadingIcon = icon,
-        onClick = onClick,
-    )
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        icon()
+        Spacer(Modifier.width(14.dp))
+        Text(label, color = ColText, fontSize = 16.sp)
+    }
 }
 
 @Composable
