@@ -47,7 +47,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var busy by mutableStateOf(false)
     /** Генерация картинок для «сделай фото»; подключает приложение (см. App.kt). */
     var images: ImageService? = null
-        private set
     var model by mutableStateOf(prefs.getString("model", "").orEmpty())
         private set
     var models by mutableStateOf<List<String>>(emptyList())
