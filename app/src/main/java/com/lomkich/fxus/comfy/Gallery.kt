@@ -104,7 +104,7 @@ fun GalleryScreen(
                 IconButton(onClick = onClose) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад", tint = cs.onSurfaceVariant)
                 }
-                Text("Галерея", style = MaterialTheme.typography.titleLarge, color = cs.onBackground)
+                Text("Артефакты", style = MaterialTheme.typography.titleLarge, color = cs.onBackground)
                 Spacer(Modifier.weight(1f))
                 if (done.isNotEmpty()) Text("${done.size}", color = cs.onSurfaceVariant)
             }

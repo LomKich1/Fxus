@@ -64,6 +64,7 @@ class ChatStore(context: Context) {
                     .put("content", it.content)
                     .put("thinking", it.thinking)
                     .put("thinkMs", it.thinkMs)
+                    .put("turnId", it.turnId)
             )
         }
         atomicWrite(chatFile(id), JSONObject().put("messages", arr).toString())
@@ -88,6 +89,7 @@ class ChatStore(context: Context) {
                 content = o.getString("content"),
                 thinking = o.optString("thinking"),
                 thinkMs = o.optLong("thinkMs"),
+                turnId = o.optLong("turnId"),
             )
         }
     } catch (e: Exception) {

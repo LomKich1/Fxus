@@ -107,7 +107,7 @@ import kotlinx.coroutines.flow.collectLatest
  * чтобы первое и последнее сообщения не оставались под ними.
  */
 @Composable
-fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
+fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit, imageContent: @Composable (Long) -> Unit) {
     val listState = rememberLazyListState()
     val hazeState = remember { HazeState() }
     val density = LocalDensity.current
@@ -221,7 +221,7 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit) {
             ),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(vm.messages, key = { it.id }) { MessageItem(it) }
+            items(vm.messages, key = { it.id }) { MessageItem(it, imageContent) }
         }
 
         if (vm.messages.isEmpty()) {
@@ -502,7 +502,7 @@ private fun ModelRow(name: String, selected: Boolean, onClick: () -> Unit) {
 // ---------- сообщения ----------
 
 @Composable
-private fun MessageItem(m: Msg) {
+private fun MessageItem(m: Msg, imageContent: @Composable (Long) -> Unit) {
     when (m.role) {
         Role.USER -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
             Box(
@@ -515,7 +515,11 @@ private fun MessageItem(m: Msg) {
                 SelectionContainer { Markdown(m.content, codeBg = ColCodeBgUser) }
             }
         }
-        Role.ASSISTANT -> AssistantMessage(m)
+        Role.ASSISTANT -> if (m.turnId != 0L) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)) { imageContent(m.turnId) }
+        } else {
+            AssistantMessage(m)
+        }
         Role.SYSTEM -> Text(
             m.content,
             color = ColMuted,

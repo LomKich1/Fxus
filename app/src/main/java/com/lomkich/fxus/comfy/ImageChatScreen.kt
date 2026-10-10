@@ -124,7 +124,7 @@ internal val ComfyTypography = Typography(
 
 /**
  * Чат генерации изображений (бывший ComfyChat). Цвета берёт из общей темы приложения.
- * onMenu открывает главное меню. Галерея теперь отдельный экран приложения (см. GalleryHost).
+ * onMenu открывает главное меню. Все созданные картинки лежат на экране «Артефакты» (см. GalleryHost).
  */
 @Composable
 fun ImageChatScreen(vm: ComfyViewModel, onMenu: () -> Unit) {
@@ -511,34 +511,39 @@ private fun TurnItem(
     Column {
         SlideIn("u${t.id}", seen, 0L) { UserBubble(t.prompt, onDelete = { onDelete(t.id) }) }
         Spacer(Modifier.height(12.dp))
-        SlideIn("b${t.id}", seen, 150L) {
-            Column {
-                ImageCard(t, onOpen)
-                if (!t.running && t.error != null && t.file == null) {
-                    TextButton(onClick = { onRetry(t.id) }) { Text("Повторить") }
-                }
-                if (t.running) {
-                    Text(
-                        t.stage,
-                        modifier = Modifier.padding(top = 8.dp, start = 4.dp),
-                        color = cs.onSurfaceVariant,
-                        fontSize = 13.sp
-                    )
-                }
-                t.tags?.let { tags ->
-                    var open by remember(t.id) { mutableStateOf(false) }
-                    Text(
-                        tags,
-                        modifier = Modifier
-                            .padding(top = 8.dp, start = 4.dp)
-                            .clickable { open = !open },
-                        color = cs.onSurfaceVariant,
-                        fontSize = 12.sp,
-                        maxLines = if (open) Int.MAX_VALUE else 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
+        SlideIn("b${t.id}", seen, 150L) { TurnResult(t, onOpen, onRetry) }
+    }
+}
+
+/** Результат генерации: картинка или прогресс, «Повторить», этап и теги. Общий для чата картинок и обычного чата. */
+@Composable
+internal fun TurnResult(t: Turn, onOpen: (Long) -> Unit, onRetry: (Long) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Column {
+        ImageCard(t, onOpen)
+        if (!t.running && t.error != null && t.file == null) {
+            TextButton(onClick = { onRetry(t.id) }) { Text("Повторить") }
+        }
+        if (t.running) {
+            Text(
+                t.stage,
+                modifier = Modifier.padding(top = 8.dp, start = 4.dp),
+                color = cs.onSurfaceVariant,
+                fontSize = 13.sp
+            )
+        }
+        t.tags?.let { tags ->
+            var open by remember(t.id) { mutableStateOf(false) }
+            Text(
+                tags,
+                modifier = Modifier
+                    .padding(top = 8.dp, start = 4.dp)
+                    .clickable { open = !open },
+                color = cs.onSurfaceVariant,
+                fontSize = 12.sp,
+                maxLines = if (open) Int.MAX_VALUE else 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

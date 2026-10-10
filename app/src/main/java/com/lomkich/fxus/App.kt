@@ -48,11 +48,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lomkich.fxus.comfy.ComfyViewModel
 import com.lomkich.fxus.comfy.GalleryHost
+import com.lomkich.fxus.comfy.ImageResult
 import com.lomkich.fxus.comfy.ImageChatScreen
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-enum class Screen { CHAT, CHATS, IMAGES, GALLERY, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
+enum class Screen { CHAT, CHATS, IMAGES, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
 
 /**
  * Три слоя: меню лежит сзади, главный экран (чат или картинки) над ним, а вторичные экраны
@@ -70,6 +71,10 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
     var drawerOpen by rememberSaveable { mutableStateOf(false) }
     // Вторичные экраны (чаты, галерея, настройки...) выезжают слева поверх открытого меню и его не закрывают.
     var overlay by rememberSaveable { mutableStateOf<Screen?>(null) }
+    // Генератор картинок живёт на уровне приложения: им пользуются и экран «Изображения»,
+    // и обычный чат по запросу «сделай фото», и «Артефакты».
+    val comfy: ComfyViewModel = viewModel()
+    LaunchedEffect(comfy) { vm.images = ComfyImageService(comfy) }
     // 0 = меню закрыто, 1 = открыто. Animatable, потому что палец тоже двигает значение.
     val progress = remember { Animatable(if (drawerOpen) 1f else 0f) }
     val scope = rememberCoroutineScope()
@@ -231,7 +236,6 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                 onChats = { openOverlay(Screen.CHATS) },
                 onArtifacts = { openOverlay(Screen.ARTIFACTS) },
                 onImages = { go(Screen.IMAGES) },
-                onGallery = { openOverlay(Screen.GALLERY) },
                 onNewChat = {
                     vm.newChat()
                     go(Screen.CHAT)
@@ -252,11 +256,10 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
         ) {
             if (screen == Screen.IMAGES) {
                 // экран картинок, как и чат, сам рисует под системными панелями и сам берёт отступы
-                val comfy: ComfyViewModel = viewModel()
                 ImageChatScreen(comfy, onMenu = ::openDrawer)
             } else {
                 // чат сам рисует контент под системными панелями и сам обрабатывает отступы
-                ChatScreen(vm, onMenu = ::openDrawer)
+                ChatScreen(vm, onMenu = ::openDrawer, imageContent = { id -> ImageResult(comfy, id) })
             }
             // Пока меню открыто: тап по сдвинутому экрану закрывает, свайп влево тоже.
             // dragMenu стоит последним в цепочке (внутренний), чтобы свайп забирал жест раньше тапа.
@@ -283,9 +286,8 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                     // экран лежит поверх меню, нажатия в пустых местах не должны проваливаться вниз
                     .pointerInput(Unit) { detectTapGestures { } }
             ) {
-                if (shownOverlay == Screen.GALLERY) {
-                    // галерея сама берёт отступы под системные панели
-                    val comfy: ComfyViewModel = viewModel()
+                if (shownOverlay == Screen.ARTIFACTS) {
+                    // артефакты (пока это картинки) сами берут отступы под системные панели
                     GalleryHost(comfy, onClose = { overlay = null })
                 } else {
                     Column(
@@ -304,7 +306,6 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                                 },
                                 onBack = { overlay = null },
                             )
-                            Screen.ARTIFACTS -> ComingSoon("Артефакты") { overlay = null }
                             Screen.SETTINGS -> SettingsScreen(vm, onBack = { overlay = null })
                             Screen.LANGUAGE -> ComingSoon("Язык") { overlay = null }
                             Screen.HELP -> HelpScreen(onBack = { overlay = null })

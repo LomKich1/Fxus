@@ -68,6 +68,9 @@ class ComfyViewModel(app: Application) : AndroidViewModel(app) {
     val seedValue = settings.seed.stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     val turns = mutableStateListOf<Turn>()
+    /** История подгружается после запуска; пока false, «картинка не найдена» показывать рано. */
+    var historyLoaded by mutableStateOf(false)
+        private set
     var size by mutableStateOf(Size.DEFAULT)
         private set
     val recentSizes = settings.recentSizes.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -137,6 +140,7 @@ class ComfyViewModel(app: Application) : AndroidViewModel(app) {
             }
             turns.addAll(0, restored)
             nextId = maxOf(nextId, (restored.maxOfOrNull { it.id } ?: 0L) + 1)
+            historyLoaded = true
         }
     }
 
@@ -406,13 +410,18 @@ class ComfyViewModel(app: Application) : AndroidViewModel(app) {
         if (c != null) viewModelScope.launch(Dispatchers.IO) { runCatching { c.interrupt() } }
     }
 
-    fun send(raw: String) {
+    /**
+     * Запускает генерацию. Возвращает id сообщения, а если ввод пуст или генерация уже идёт, то null.
+     * [sizeOverride] задаёт размер только для этого запроса (так делает чат Ollama по «сделай фото»).
+     */
+    fun send(raw: String, sizeOverride: Size? = null): Long? {
         val text = raw.trim()
-        if (text.isEmpty() || job?.isActive == true) return
+        if (text.isEmpty() || job?.isActive == true) return null
         val id = nextId++
-        val sizeOpt = size
+        val sizeOpt = sizeOverride ?: size
         turns.add(Turn(id = id, prompt = text, size = sizeOpt))
         startGeneration(id, text, sizeOpt)
+        return id
     }
 
     /** Повтор неудавшейся генерации в том же сообщении. */

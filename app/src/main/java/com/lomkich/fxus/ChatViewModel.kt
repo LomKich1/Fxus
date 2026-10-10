@@ -33,6 +33,7 @@ private const val HELP = """Команды (как в ollama):
 /set parameter <имя> <значение>
 /show — текущие настройки
 /load <модель> — сменить модель (контекст сбросится)
+Фото: «сделай фото <описание> [1024x1024]» — картинка из ComfyUI.
 Модель и адрес сервера — в шапке и в настройках."""
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
@@ -44,6 +45,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     val messages = mutableStateListOf<Msg>()
     var busy by mutableStateOf(false)
+    /** Генерация картинок для «сделай фото»; подключает приложение (см. App.kt). */
+    var images: ImageService? = null
         private set
     var model by mutableStateOf(prefs.getString("model", "").orEmpty())
         private set
@@ -107,7 +110,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun send(raw: String) {
         val text = raw.trim()
         if (text.isEmpty() || busy) return
-        if (text.startsWith("/")) command(text) else chat(text)
+        if (text.startsWith("/")) {
+            command(text)
+            return
+        }
+        val photo = ImageRequest.parse(text)
+        if (photo != null) imageChat(text, photo) else chat(text)
     }
 
     fun stop() {
@@ -183,7 +191,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun persist() {
         val snapshot = messages.filter {
-            (it.role == Role.USER || it.role == Role.ASSISTANT) && (it.content.isNotEmpty() || it.thinking.isNotEmpty())
+            (it.role == Role.USER || it.role == Role.ASSISTANT) &&
+                (it.content.isNotEmpty() || it.thinking.isNotEmpty() || it.turnId != 0L)
         }
         if (snapshot.isEmpty()) return
         val id = currentId ?: System.currentTimeMillis().toString(36).also { currentId = it }
@@ -210,6 +219,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- чат ----------
+
+    /** «Сделай фото»: сообщение пользователя остаётся в чате, под ним появляется картинка. Модель Ollama не участвует. */
+    private fun imageChat(text: String, req: ImageRequest) {
+        add(Role.USER, text)
+        val service = images
+        when {
+            req.prompt.isBlank() -> sys("Опиши, что на фото: «сделай фото кота на крыше».")
+            service == null -> sys("Генерация картинок сейчас недоступна.")
+            else -> {
+                val turnId = service.generate(req.prompt, req.width, req.height)
+                if (turnId == null) sys("Картинка уже создаётся. Подожди, пока закончится.")
+                else messages.add(Msg(nextId++, Role.ASSISTANT, "", turnId = turnId))
+            }
+        }
+        persist()
+    }
 
     private fun chat(text: String) {
         add(Role.USER, text)
