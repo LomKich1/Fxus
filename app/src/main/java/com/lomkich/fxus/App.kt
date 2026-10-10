@@ -45,10 +45,12 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.lomkich.fxus.comfy.ComfyViewModel
+import com.lomkich.fxus.comfy.ImageChatScreen
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-enum class Screen { CHAT, CHATS, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
+enum class Screen { CHAT, CHATS, IMAGES, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
 
 /**
  * Два слоя: меню лежит сзади, экран (чат/настройки/заглушки) сверху.
@@ -63,6 +65,8 @@ enum class Screen { CHAT, CHATS, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
 fun FxusApp(vm: ChatViewModel = viewModel()) {
     var screen by rememberSaveable { mutableStateOf(Screen.CHAT) }
     var drawerOpen by rememberSaveable { mutableStateOf(false) }
+    // пункт меню «Галерея»: экран картинок откроется сразу с галереей (флаг сбрасывает сам экран)
+    var openGallery by remember { mutableStateOf(false) }
     // 0 = меню закрыто, 1 = открыто. Animatable, потому что палец тоже двигает значение.
     val progress = remember { Animatable(if (drawerOpen) 1f else 0f) }
     val scope = rememberCoroutineScope()
@@ -206,6 +210,14 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                 onDeleteChat = vm::deleteChat,
                 onChats = { go(Screen.CHATS) },
                 onArtifacts = { go(Screen.ARTIFACTS) },
+                onImages = {
+                    openGallery = false
+                    go(Screen.IMAGES)
+                },
+                onGallery = {
+                    openGallery = true
+                    go(Screen.IMAGES)
+                },
                 onNewChat = {
                     vm.newChat()
                     go(Screen.CHAT)
@@ -227,6 +239,15 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
             if (screen == Screen.CHAT) {
                 // чат сам рисует контент под системными панелями и сам обрабатывает отступы
                 ChatScreen(vm, onMenu = ::openDrawer)
+            } else if (screen == Screen.IMAGES) {
+                // экран картинок, как и чат, сам рисует под системными панелями и сам берёт отступы
+                val comfy: ComfyViewModel = viewModel()
+                ImageChatScreen(
+                    comfy,
+                    onMenu = ::openDrawer,
+                    openGallery = openGallery,
+                    onGalleryHandled = { openGallery = false },
+                )
             } else {
                 Column(
                     Modifier
@@ -248,7 +269,7 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                         Screen.SETTINGS -> SettingsScreen(vm, onBack = ::leaveSettings)
                         Screen.LANGUAGE -> ComingSoon("Язык", onBack = ::leaveSettings)
                         Screen.HELP -> HelpScreen(onBack = ::leaveSettings)
-                        Screen.CHAT -> Unit
+                        Screen.CHAT, Screen.IMAGES -> Unit
                     }
                 }
             }

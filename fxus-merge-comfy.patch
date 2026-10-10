@@ -1,0 +1,4018 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 7a88656..cb50e09 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -2,6 +2,7 @@ plugins {
+     id("com.android.application")
+     id("org.jetbrains.kotlin.android")
+     id("org.jetbrains.kotlin.plugin.compose")
++    id("org.jetbrains.kotlin.plugin.serialization")
+ }
+ 
+ // Ключ подписи приходит из окружения (GitHub Secrets, см. .github/workflows/build.yml).
+@@ -15,7 +16,7 @@ android {
+ 
+     defaultConfig {
+         applicationId = "com.lomkich.fxus"
+-        minSdk = 26
++        minSdk = 29
+         targetSdk = 35
+         // номер запуска CI растёт сам, поэтому каждая сборка «новее» предыдущей и ставится поверх
+         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+@@ -45,6 +46,9 @@ android {
+         checkReleaseBuilds = false
+         abortOnError = false
+     }
++    packaging {
++        resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/*.version", "/kotlin/**", "/DebugProbesKt.bin")
++    }
+     compileOptions {
+         sourceCompatibility = JavaVersion.VERSION_17
+         targetCompatibility = JavaVersion.VERSION_17
+@@ -65,4 +69,11 @@ dependencies {
+     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+     implementation("dev.chrisbanes.haze:haze:1.5.4")
++
++    // экран картинок (бывший ComfyChat)
++    implementation("androidx.compose.material:material-icons-core")
++    implementation("androidx.core:core-ktx:1.15.0")
++    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
++    implementation("androidx.datastore:datastore-preferences:1.1.1")
++    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+ }
+diff --git a/app/proguard-rules.pro b/app/proguard-rules.pro
+index 0d09166..d9d88c2 100644
+--- a/app/proguard-rules.pro
++++ b/app/proguard-rules.pro
+@@ -16,3 +16,11 @@
+ -dontwarn org.bouncycastle.**
+ -dontwarn org.conscrypt.**
+ -dontwarn org.openjsse.**
++
++# kotlinx.serialization: сериализаторы классов экрана картинок (история в index.json)
++-keepattributes *Annotation*, InnerClasses, Signature, EnclosingMethod
++-keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
++-keepclasseswithmembers class kotlinx.serialization.json.** { kotlinx.serialization.KSerializer serializer(...); }
++-keep,includedescriptorclasses class com.lomkich.fxus.comfy.**$$serializer { *; }
++-keepclassmembers class com.lomkich.fxus.comfy.** { *** Companion; }
++-keepclasseswithmembers class com.lomkich.fxus.comfy.** { kotlinx.serialization.KSerializer serializer(...); }
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 8249625..fbce88d 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -27,5 +27,15 @@
+                 <category android:name="android.intent.category.LAUNCHER" />
+             </intent-filter>
+         </activity>
++
++        <provider
++            android:name="androidx.core.content.FileProvider"
++            android:authorities="${applicationId}.fileprovider"
++            android:exported="false"
++            android:grantUriPermissions="true">
++            <meta-data
++                android:name="android.support.FILE_PROVIDER_PATHS"
++                android:resource="@xml/file_paths" />
++        </provider>
+     </application>
+ </manifest>
+diff --git a/app/src/main/assets/workflow.json b/app/src/main/assets/workflow.json
+new file mode 100644
+index 0000000..4e0bbb1
+--- /dev/null
++++ b/app/src/main/assets/workflow.json
+@@ -0,0 +1,180 @@
++{
++  "1": {
++    "inputs": {
++      "text": [
++        "2",
++        0
++      ],
++      "threshold": 0.85,
++      "underscores_to_spaces": true,
++      "escape_parentheses": true
++    },
++    "class_type": "RuDanbooruTags",
++    "_meta": {
++      "title": "RU -> Danbooru Tags"
++    }
++  },
++  "2": {
++    "inputs": {
++      "value": "готическая внешность, девушка, черные волосы, красные глаза, без штанов, оверсайз фтуболка, черная футболка, одна девушка, растрепанные волосы, текст"
++    },
++    "class_type": "PrimitiveStringMultiline",
++    "_meta": {
++      "title": "Строка (многострочная)"
++    }
++  },
++  "3": {
++    "inputs": {
++      "source": [
++        "1",
++        1
++      ]
++    },
++    "class_type": "PreviewAny",
++    "_meta": {
++      "title": "Предпросмотр любого"
++    }
++  },
++  "4": {
++    "inputs": {
++      "source": [
++        "1",
++        0
++      ]
++    },
++    "class_type": "PreviewAny",
++    "_meta": {
++      "title": "Предпросмотр любого"
++    }
++  },
++  "5": {
++    "inputs": {
++      "text": [
++        "12",
++        0
++      ],
++      "clip": [
++        "6",
++        1
++      ]
++    },
++    "class_type": "CLIPTextEncode",
++    "_meta": {
++      "title": "Кодирование текста CLIP (Запрос)"
++    }
++  },
++  "6": {
++    "inputs": {
++      "ckpt_name": "vaelsem_vlsmv10.safetensors"
++    },
++    "class_type": "CheckpointLoaderSimple",
++    "_meta": {
++      "title": "Загрузить сheckpoint"
++    }
++  },
++  "7": {
++    "inputs": {
++      "seed": 951352267532147,
++      "steps": 20,
++      "cfg": 8,
++      "sampler_name": "dpmpp_2m_sde_gpu",
++      "scheduler": "karras",
++      "denoise": 1,
++      "model": [
++        "6",
++        0
++      ],
++      "positive": [
++        "5",
++        0
++      ],
++      "negative": [
++        "14",
++        0
++      ],
++      "latent_image": [
++        "9",
++        0
++      ]
++    },
++    "class_type": "KSampler",
++    "_meta": {
++      "title": "KSampler"
++    }
++  },
++  "8": {
++    "inputs": {
++      "images": [
++        "11",
++        0
++      ]
++    },
++    "class_type": "PreviewImage",
++    "_meta": {
++      "title": "Предварительный просмотр изображения"
++    }
++  },
++  "9": {
++    "inputs": {
++      "width": 2048,
++      "height": 1024,
++      "batch_size": 1
++    },
++    "class_type": "EmptyLatentImage",
++    "_meta": {
++      "title": "Пустое латентное изображение"
++    }
++  },
++  "11": {
++    "inputs": {
++      "samples": [
++        "7",
++        0
++      ],
++      "vae": [
++        "22",
++        0
++      ]
++    },
++    "class_type": "VAEDecode",
++    "_meta": {
++      "title": "Декодировать VAE"
++    }
++  },
++  "12": {
++    "inputs": {
++      "string_a": "",
++      "string_b": [
++        "1",
++        0
++      ],
++      "delimiter": ""
++    },
++    "class_type": "StringConcatenate",
++    "_meta": {
++      "title": "Объединить"
++    }
++  },
++  "14": {
++    "inputs": {
++      "text": "score_6, score_5, score_4, worst quality, low quality, bad anatomy, bad hands, extra, fingers, extra limbs, signature",
++      "clip": [
++        "6",
++        1
++      ]
++    },
++    "class_type": "CLIPTextEncode",
++    "_meta": {
++      "title": "Кодирование текста CLIP (Запрос)"
++    }
++  },
++  "22": {
++    "inputs": {
++      "vae_name": "sdxlVAE.safetensors"
++    },
++    "class_type": "VAELoader",
++    "_meta": {
++      "title": "Загрузить VAE"
++    }
++  }
++}
+\ No newline at end of file
+diff --git a/app/src/main/java/com/lomkich/fxus/App.kt b/app/src/main/java/com/lomkich/fxus/App.kt
+index 0e1150c..aa531f9 100644
+--- a/app/src/main/java/com/lomkich/fxus/App.kt
++++ b/app/src/main/java/com/lomkich/fxus/App.kt
+@@ -45,10 +45,12 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+ import androidx.compose.ui.unit.IntOffset
+ import androidx.compose.ui.unit.dp
+ import androidx.lifecycle.viewmodel.compose.viewModel
++import com.lomkich.fxus.comfy.ComfyViewModel
++import com.lomkich.fxus.comfy.ImageChatScreen
+ import kotlinx.coroutines.launch
+ import kotlin.math.roundToInt
+ 
+-enum class Screen { CHAT, CHATS, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
++enum class Screen { CHAT, CHATS, IMAGES, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
+ 
+ /**
+  * Два слоя: меню лежит сзади, экран (чат/настройки/заглушки) сверху.
+@@ -63,6 +65,8 @@ enum class Screen { CHAT, CHATS, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
+ fun FxusApp(vm: ChatViewModel = viewModel()) {
+     var screen by rememberSaveable { mutableStateOf(Screen.CHAT) }
+     var drawerOpen by rememberSaveable { mutableStateOf(false) }
++    // пункт меню «Галерея»: экран картинок откроется сразу с галереей (флаг сбрасывает сам экран)
++    var openGallery by remember { mutableStateOf(false) }
+     // 0 = меню закрыто, 1 = открыто. Animatable, потому что палец тоже двигает значение.
+     val progress = remember { Animatable(if (drawerOpen) 1f else 0f) }
+     val scope = rememberCoroutineScope()
+@@ -206,6 +210,14 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+                 onDeleteChat = vm::deleteChat,
+                 onChats = { go(Screen.CHATS) },
+                 onArtifacts = { go(Screen.ARTIFACTS) },
++                onImages = {
++                    openGallery = false
++                    go(Screen.IMAGES)
++                },
++                onGallery = {
++                    openGallery = true
++                    go(Screen.IMAGES)
++                },
+                 onNewChat = {
+                     vm.newChat()
+                     go(Screen.CHAT)
+@@ -227,6 +239,15 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+             if (screen == Screen.CHAT) {
+                 // чат сам рисует контент под системными панелями и сам обрабатывает отступы
+                 ChatScreen(vm, onMenu = ::openDrawer)
++            } else if (screen == Screen.IMAGES) {
++                // экран картинок, как и чат, сам рисует под системными панелями и сам берёт отступы
++                val comfy: ComfyViewModel = viewModel()
++                ImageChatScreen(
++                    comfy,
++                    onMenu = ::openDrawer,
++                    openGallery = openGallery,
++                    onGalleryHandled = { openGallery = false },
++                )
+             } else {
+                 Column(
+                     Modifier
+@@ -248,7 +269,7 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
+                         Screen.SETTINGS -> SettingsScreen(vm, onBack = ::leaveSettings)
+                         Screen.LANGUAGE -> ComingSoon("Язык", onBack = ::leaveSettings)
+                         Screen.HELP -> HelpScreen(onBack = ::leaveSettings)
+-                        Screen.CHAT -> Unit
++                        Screen.CHAT, Screen.IMAGES -> Unit
+                     }
+                 }
+             }
+diff --git a/app/src/main/java/com/lomkich/fxus/Drawer.kt b/app/src/main/java/com/lomkich/fxus/Drawer.kt
+index 2c10362..1d3bd4a 100644
+--- a/app/src/main/java/com/lomkich/fxus/Drawer.kt
++++ b/app/src/main/java/com/lomkich/fxus/Drawer.kt
+@@ -51,6 +51,8 @@ fun DrawerContent(
+     onDeleteChat: (String) -> Unit,
+     onChats: () -> Unit,
+     onArtifacts: () -> Unit,
++    onImages: () -> Unit,
++    onGallery: () -> Unit,
+     onNewChat: () -> Unit,
+     onProfile: () -> Unit,
+     onLanguage: () -> Unit,
+@@ -71,6 +73,8 @@ fun DrawerContent(
+             modifier = Modifier.padding(start = 8.dp, top = 28.dp, bottom = 20.dp),
+         )
+         DrawerItem("Чаты", onChats)
++        DrawerItem("Изображения", onImages)
++        DrawerItem("Галерея", onGallery)
+         DrawerItem("Артефакты", onArtifacts)
+         Box(Modifier.fillMaxWidth().padding(vertical = 14.dp).height(1.dp).background(ColSurface))
+         Text("Недавние", color = ColMuted, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp, bottom = 8.dp))
+diff --git a/app/src/main/java/com/lomkich/fxus/HelpScreen.kt b/app/src/main/java/com/lomkich/fxus/HelpScreen.kt
+index 2ee731e..94cc568 100644
+--- a/app/src/main/java/com/lomkich/fxus/HelpScreen.kt
++++ b/app/src/main/java/com/lomkich/fxus/HelpScreen.kt
+@@ -72,6 +72,12 @@ fun HelpScreen(onBack: () -> Unit) {
+             HelpCommand("/set parameter <имя> <значение>", "параметр модели, например temperature 0.7 или num_ctx 8192")
+             HelpText("think и parameter действуют, пока приложение не закрыто. Свои параметры можно проверить через /show.")
+ 
++            HelpTitle("Изображения")
++            HelpText("Пункт «Изображения» в меню открывает чат генерации картинок через ComfyUI: опиши картинку по-русски и отправь.")
++            HelpText("•  Под полем ввода выбираются размер кадра и модель, в шапке воркфлоу (можно импортировать свой).")
++            HelpText("•  Адрес ComfyUI, туннель для доступа не из дома и фиксированный сид настраиваются в шестерёнке в шапке.")
++            HelpText("•  «Галерея» в меню показывает все созданные картинки. Долгое нажатие включает выбор нескольких.")
++
+             HelpTitle("Оформление")
+             HelpText("Кнопка справа вверху в настройках переключает тёмную и светлую тему.")
+ 
+diff --git a/app/src/main/java/com/lomkich/fxus/Theme.kt b/app/src/main/java/com/lomkich/fxus/Theme.kt
+index f9a1d67..63e7943 100644
+--- a/app/src/main/java/com/lomkich/fxus/Theme.kt
++++ b/app/src/main/java/com/lomkich/fxus/Theme.kt
+@@ -132,6 +132,10 @@ fun FxusTheme(mode: ThemeMode, content: @Composable () -> Unit) {
+             background = c.bg,
+             surface = c.surface,
+             surfaceContainer = c.surface, // фон выпадающего списка моделей
++            surfaceContainerLowest = c.drawer,
++            surfaceContainerLow = c.surface,
++            surfaceContainerHigh = c.user,   // попапы экрана картинок
++            surfaceContainerHighest = c.codeBgUser,
+             surfaceVariant = c.user,
+             surfaceTint = Color.Transparent, // без цветного налёта на диалогах и меню
+             primary = c.accent,
+@@ -146,6 +150,10 @@ fun FxusTheme(mode: ThemeMode, content: @Composable () -> Unit) {
+             background = c.bg,
+             surface = c.surface,
+             surfaceContainer = c.surface,
++            surfaceContainerLowest = c.drawer,
++            surfaceContainerLow = c.surface,
++            surfaceContainerHigh = c.user,   // попапы экрана картинок
++            surfaceContainerHighest = c.codeBgUser,
+             surfaceVariant = c.user,
+             surfaceTint = Color.Transparent, // без цветного налёта на диалогах и меню
+             primary = c.accent,
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/ComfyClient.kt b/app/src/main/java/com/lomkich/fxus/comfy/ComfyClient.kt
+new file mode 100644
+index 0000000..1bdd2b2
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/ComfyClient.kt
+@@ -0,0 +1,435 @@
++package com.lomkich.fxus.comfy
++
++import android.graphics.Bitmap
++import android.graphics.BitmapFactory
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.channels.Channel
++import kotlinx.coroutines.channels.awaitClose
++import kotlinx.coroutines.delay
++import kotlinx.coroutines.flow.Flow
++import kotlinx.coroutines.flow.buffer
++import kotlinx.coroutines.flow.callbackFlow
++import kotlinx.coroutines.flow.channelFlow
++import kotlinx.coroutines.flow.flowOn
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
++import kotlinx.serialization.json.Json
++import kotlinx.serialization.json.JsonArray
++import kotlinx.serialization.json.JsonObject
++import kotlinx.serialization.json.booleanOrNull
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.contentOrNull
++import kotlinx.serialization.json.intOrNull
++import kotlinx.serialization.json.longOrNull
++import kotlinx.serialization.json.jsonObject
++import kotlinx.serialization.json.jsonPrimitive
++import kotlinx.serialization.json.put
++import okhttp3.HttpUrl.Companion.toHttpUrl
++import okhttp3.MediaType.Companion.toMediaType
++import okhttp3.OkHttpClient
++import okhttp3.Request
++import okhttp3.RequestBody.Companion.toRequestBody
++import okhttp3.Response
++import okhttp3.WebSocket
++import okhttp3.WebSocketListener
++import okio.ByteString
++import java.io.IOException
++import java.nio.ByteBuffer
++import java.util.UUID
++import java.util.concurrent.TimeUnit
++import java.util.concurrent.atomic.AtomicBoolean
++
++/**
++ * Клиент ComfyUI.
++ *
++ * Устойчивость к обрывам:
++ *  - у всех REST-запросов жёсткие таймауты (раньше висели бесконечно и блокировали приложение);
++ *  - WebSocket пингуется каждые 10 с, «мёртвое» соединение обнаруживается за ~10-20 с;
++ *  - при обрыве идёт переподключение с нарастающей паузой (clientId тот же, сервер продолжает
++ *    слать события), а результат при необходимости добирается из /history;
++ *  - prompt_id задаём сами, поэтому повторная отправка безопасна и дубликатов не плодит.
++ */
++data class RemoteWorkflow(val name: String, val hash: String, val mtime: Long, val valid: Boolean)
++
++class ComfyClient(private val baseUrl: String) {
++
++    private val rest = OkHttpClient.Builder()
++        .connectTimeout(5, TimeUnit.SECONDS)
++        .readTimeout(15, TimeUnit.SECONDS)
++        .writeTimeout(15, TimeUnit.SECONDS)
++        .callTimeout(30, TimeUnit.SECONDS)
++        .build()
++
++    private val wsHttp = rest.newBuilder()
++        .callTimeout(0, TimeUnit.MILLISECONDS)
++        .readTimeout(0, TimeUnit.MILLISECONDS)
++        .pingInterval(10, TimeUnit.SECONDS)
++        .build()
++
++    private val download = rest.newBuilder()
++        .readTimeout(30, TimeUnit.SECONDS)
++        .callTimeout(60, TimeUnit.SECONDS)
++        .build()
++
++    private val json = Json { ignoreUnknownKeys = true }
++    private val clientId = UUID.randomUUID().toString()
++
++    private class Stop : CancellationException("stop")
++
++    private enum class Status { RUNNING, DONE, LOST, UNKNOWN }
++
++    private sealed interface Frame {
++        data object Opened : Frame
++        class Text(val s: String) : Frame
++        class Bin(val b: ByteString) : Frame
++        data class Closed(val error: Throwable?) : Frame
++    }
++
++    /** Одно WebSocket-соединение как поток кадров. Завершается, когда соединение закрыто или оборвано. */
++    private fun frames(): Flow<Frame> = callbackFlow {
++        val opened = AtomicBoolean(false)
++        val wsUrl = baseUrl.replaceFirst("http", "ws") + "/ws?clientId=$clientId"
++        val ws = wsHttp.newWebSocket(Request.Builder().url(wsUrl).build(), object : WebSocketListener() {
++            override fun onOpen(webSocket: WebSocket, response: Response) {
++                opened.set(true)
++                trySend(Frame.Opened)
++            }
++
++            override fun onMessage(webSocket: WebSocket, text: String) {
++                trySend(Frame.Text(text))
++            }
++
++            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
++                trySend(Frame.Bin(bytes))
++            }
++
++            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
++                webSocket.close(code, reason)
++            }
++
++            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
++                trySend(Frame.Closed(null))
++                close()
++            }
++
++            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
++                trySend(Frame.Closed(t))
++                close()
++            }
++        })
++        // рукопожатие без таймаута чтения может висеть вечно, поэтому режем сами
++        launch {
++            delay(8_000)
++            if (!opened.get()) ws.cancel()
++        }
++        awaitClose { ws.cancel() }
++    }.buffer(Channel.UNLIMITED)
++
++    private fun stageFor(node: String, spec: WorkflowSpec): String? = when (node) {
++        spec.translator -> "Перевожу описание в теги…"
++        spec.sampler -> "Генерирую…"
++        spec.decode -> "Декодирую…"
++        else -> null
++    }
++
++    private fun parseImages(arr: JsonArray?): List<ImageRef> =
++        arr?.mapNotNull { el ->
++            val o = el as? JsonObject ?: return@mapNotNull null
++            val name = o["filename"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
++            ImageRef(
++                name,
++                o["subfolder"]?.jsonPrimitive?.contentOrNull ?: "",
++                o["type"]?.jsonPrimitive?.contentOrNull ?: "temp"
++            )
++        }.orEmpty()
++
++    private fun firstText(out: JsonObject?): String? =
++        (out?.get("text") as? JsonArray)?.firstOrNull()?.jsonPrimitive?.contentOrNull
++
++    // Бинарные кадры (big-endian): [1][формат:4][картинка] или [4][длина метаданных:4][json][картинка]
++    private fun decodePreview(bytes: ByteString): Bitmap? {
++        val b = bytes.toByteArray()
++        if (b.size < 8) return null
++        val bb = ByteBuffer.wrap(b)
++        val offset = when (bb.getInt(0)) {
++            1 -> 8
++            4 -> 8 + bb.getInt(4)
++            else -> return null
++        }
++        if (offset >= b.size) return null
++        return BitmapFactory.decodeByteArray(b, offset, b.size - offset)
++    }
++
++    fun generate(workflow: JsonObject, spec: WorkflowSpec): Flow<GenEvent> = channelFlow {
++        val images = mutableListOf<ImageRef>()
++        var promptId = UUID.randomUUID().toString()
++        var finished = false
++        var submitted = false
++        var tried = false
++        var failures = 0
++
++        suspend fun finish(ev: GenEvent) {
++            if (!finished) {
++                finished = true
++                send(ev)
++            }
++        }
++
++        suspend fun applyOutputs(outputs: JsonObject?) {
++            spec.tagsPreview?.let { tp ->
++                firstText(outputs?.get(tp) as? JsonObject)?.let { send(GenEvent.Tags(it)) }
++            }
++            // выходных нод может быть несколько (ветки Branch): берём картинки из той, что реально отработала
++            val imgs = spec.outputs.flatMap { id ->
++                parseImages((outputs?.get(id) as? JsonObject)?.get("images") as? JsonArray)
++            }
++            if (imgs.isNotEmpty()) {
++                images.clear()
++                images.addAll(imgs)
++            }
++        }
++
++        /** true — задача уже завершена и finish() вызван. Бросает IOException при проблемах сети. */
++        suspend fun checkHistory(): Boolean {
++            val body = rest.newCall(Request.Builder().url("$baseUrl/history/$promptId").build())
++                .execute().use { r -> if (r.isSuccessful) r.body?.string() else null }
++                ?: return false
++            val entry = json.parseToJsonElement(body).jsonObject[promptId]?.jsonObject ?: return false
++            val st = entry["status"] as? JsonObject
++            val statusStr = st?.get("status_str")?.jsonPrimitive?.contentOrNull
++            val completed = st?.get("completed")?.jsonPrimitive?.booleanOrNull == true
++            if (statusStr == "error") {
++                finish(GenEvent.Failed("Генерация завершилась ошибкой на стороне ComfyUI"))
++                return true
++            }
++            if (completed) {
++                applyOutputs(entry["outputs"] as? JsonObject)
++                finish(GenEvent.Done(images.toList()))
++                return true
++            }
++            return false
++        }
++
++        /** Узнаёт судьбу задачи после обрыва: готова, ещё идёт, потеряна или неизвестно (сеть всё ещё лежит). */
++        suspend fun recover(): Status = try {
++            if (checkHistory()) {
++                Status.DONE
++            } else {
++                val q = rest.newCall(Request.Builder().url("$baseUrl/queue").build())
++                    .execute().use { r -> if (r.isSuccessful) r.body?.string() else null }
++                if (q == null) {
++                    Status.UNKNOWN
++                } else {
++                    val o = json.parseToJsonElement(q).jsonObject
++                    val items = (o["queue_running"] as? JsonArray).orEmpty() +
++                        (o["queue_pending"] as? JsonArray).orEmpty()
++                    val inQueue = items.any {
++                        (it as? JsonArray)?.getOrNull(1)?.jsonPrimitive?.contentOrNull == promptId
++                    }
++                    when {
++                        inQueue -> Status.RUNNING
++                        checkHistory() -> Status.DONE   // успела закончиться между двумя запросами
++                        else -> Status.LOST
++                    }
++                }
++            }
++        } catch (e: IOException) {
++            Status.UNKNOWN
++        } catch (e: IllegalArgumentException) {
++            Status.UNKNOWN
++        }
++
++        /** true — сервер ответил (принял или отклонил); false — до него не достучались. */
++        suspend fun submit(): Boolean = try {
++            val body = buildJsonObject {
++                put("prompt", workflow)
++                put("client_id", clientId)
++                put("prompt_id", promptId)
++            }.toString().toRequestBody("application/json".toMediaType())
++            rest.newCall(Request.Builder().url("$baseUrl/prompt").post(body).build()).execute().use { r ->
++                val text = r.body?.string().orEmpty()
++                if (r.isSuccessful) {
++                    runCatching {
++                        json.parseToJsonElement(text).jsonObject["prompt_id"]?.jsonPrimitive?.contentOrNull
++                    }.getOrNull()?.let { promptId = it }
++                } else {
++                    finish(GenEvent.Failed("ComfyUI отклонил workflow (${r.code}): ${text.take(400)}"))
++                }
++            }
++            true
++        } catch (e: IOException) {
++            false
++        }
++
++        suspend fun complete() {
++            if (images.isEmpty()) {
++                recover()   // события могли потеряться при обрыве, добираем из истории
++                if (finished) return
++            }
++            finish(GenEvent.Done(images.toList()))
++        }
++
++        suspend fun handleText(text: String) {
++            val msg = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
++            val type = msg["type"]?.jsonPrimitive?.contentOrNull
++            val data = msg["data"] as? JsonObject ?: return
++            when (type) {
++                "executing" -> {
++                    val node = data["node"]?.jsonPrimitive?.contentOrNull
++                    if (node == null) complete() else stageFor(node, spec)?.let { send(GenEvent.Stage(it)) }
++                }
++                "progress" -> {
++                    val node = data["node"]?.jsonPrimitive?.contentOrNull
++                    val v = data["value"]?.jsonPrimitive?.intOrNull ?: return
++                    val m = data["max"]?.jsonPrimitive?.intOrNull ?: return
++                    if (m > 0 && (node == null || node == spec.sampler)) send(GenEvent.Progress(v, m))
++                }
++                "executed" -> {
++                    val node = data["node"]?.jsonPrimitive?.contentOrNull
++                    val out = data["output"] as? JsonObject
++                    if (spec.tagsPreview != null && node == spec.tagsPreview) firstText(out)?.let { send(GenEvent.Tags(it)) }
++                    if (node != null && node in spec.outputs) images.addAll(parseImages(out?.get("images") as? JsonArray))
++                }
++                "execution_success" -> complete()
++                "execution_interrupted" -> finish(GenEvent.Failed("Остановлено"))
++                "execution_error" -> {
++                    val node = data["node_type"]?.jsonPrimitive?.contentOrNull ?: "?"
++                    val m = data["exception_message"]?.jsonPrimitive?.contentOrNull ?: "неизвестная ошибка"
++                    finish(GenEvent.Failed("Ошибка в ноде $node: ${m.trim()}"))
++                }
++            }
++        }
++
++        while (!finished) {
++            var abort = false
++            try {
++                frames().collect { f ->
++                    when (f) {
++                        is Frame.Opened -> {
++                            if (!submitted) {
++                                val st = if (tried) recover() else Status.UNKNOWN
++                                tried = true
++                                if (!finished) {
++                                    submitted = st == Status.RUNNING || submit()
++                                    if (!submitted) abort = true
++                                }
++                            } else {
++                                send(GenEvent.Stage("Связь восстановлена"))
++                                if (recover() == Status.LOST) {
++                                    finish(GenEvent.Failed("ComfyUI потерял задачу (возможно, сервер перезапускали)"))
++                                }
++                            }
++                        }
++                        is Frame.Text -> {
++                            failures = 0
++                            handleText(f.s)
++                        }
++                        is Frame.Bin -> decodePreview(f.b)?.let { send(GenEvent.Preview(it)) }
++                        is Frame.Closed -> {}
++                    }
++                    if (finished || abort) throw Stop()
++                }
++            } catch (e: Stop) {
++                // нормальный выход из цикла приёма
++            }
++
++            if (finished) break
++
++            failures++
++            val limit = if (submitted) 8 else 3
++            if (failures > limit) {
++                finish(
++                    GenEvent.Failed(
++                        if (submitted) "Связь с ComfyUI потеряна и не восстановилась"
++                        else "Не достучался до $baseUrl. Проверь адрес, запущен ли ComfyUI и не мешает ли VPN"
++                    )
++                )
++                break
++            }
++            send(
++                GenEvent.Stage(
++                    if (submitted) "Связь потеряна, переподключаюсь… ($failures/$limit)"
++                    else "Нет связи, пробую снова ($failures/$limit)…"
++                )
++            )
++            delay(minOf(1000L shl (failures - 1), 8000L))
++            if (submitted) recover()   // вдруг задача уже закончилась, пока связи не было
++        }
++    }.flowOn(Dispatchers.IO)
++
++    /** Скачивание результата (оригинальный PNG) с повторами: сеть могла моргнуть как раз в этот момент. */
++    suspend fun fetchImageBytes(ref: ImageRef): ByteArray? = withContext(Dispatchers.IO) {
++        val url = "$baseUrl/view".toHttpUrl().newBuilder()
++            .addQueryParameter("filename", ref.filename)
++            .addQueryParameter("subfolder", ref.subfolder)
++            .addQueryParameter("type", ref.type)
++            .build()
++        repeat(3) { attempt ->
++            try {
++                val bytes = download.newCall(Request.Builder().url(url).build()).execute().use { r ->
++                    if (r.isSuccessful) r.body?.bytes() else null
++                }
++                if (bytes != null && bytes.isNotEmpty()) return@withContext bytes
++            } catch (e: IOException) {
++                // повторим
++            }
++            delay(1000L * (attempt + 1))
++        }
++        null
++    }
++
++    /** Чекпоинты, которые видит сервер. Блокирующий вызов, дёргать из IO. */
++    fun listCheckpoints(): List<String> {
++        val body = rest.newCall(Request.Builder().url("$baseUrl/object_info/CheckpointLoaderSimple").build())
++            .execute().use { r ->
++                if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
++                r.body?.string().orEmpty()
++            }
++        val field = json.parseToJsonElement(body).jsonObject["CheckpointLoaderSimple"]?.jsonObject
++            ?.get("input")?.jsonObject?.get("required")?.jsonObject?.get("ckpt_name") as? JsonArray
++            ?: return emptyList()
++        val first = field.firstOrNull()
++        // старый формат: [[имена], {...}], новый: ["COMBO", {"options": [имена]}]
++        val list = when {
++            first is JsonArray -> first
++            first?.jsonPrimitive?.contentOrNull == "COMBO" -> (field.getOrNull(1) as? JsonObject)?.get("options") as? JsonArray
++            else -> null
++        }
++        return list?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
++    }
++
++    /** Воркфлоу, лежащие на ПК (расширение app_bridge). Блокирующий вызов, дёргать из IO. */
++    fun listWorkflows(): List<RemoteWorkflow> {
++        val body = rest.newCall(Request.Builder().url("$baseUrl/app_bridge/workflows").build())
++            .execute().use { r ->
++                if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
++                r.body?.string().orEmpty()
++            }
++        return (json.parseToJsonElement(body) as? JsonArray).orEmpty().mapNotNull { el ->
++            val o = el as? JsonObject ?: return@mapNotNull null
++            val name = o["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
++            RemoteWorkflow(
++                name = name,
++                hash = o["hash"]?.jsonPrimitive?.contentOrNull.orEmpty(),
++                mtime = o["mtime"]?.jsonPrimitive?.longOrNull ?: 0L,
++                valid = o["valid"]?.jsonPrimitive?.booleanOrNull ?: false
++            )
++        }
++    }
++
++    /** Сырые байты файла с ПК: хэш на телефоне считается ровно от них. */
++    fun fetchWorkflow(name: String): ByteArray {
++        val url = "$baseUrl/app_bridge/workflows".toHttpUrl().newBuilder().addPathSegment(name).build()
++        return rest.newCall(Request.Builder().url(url).build()).execute().use { r ->
++            if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
++            r.body?.bytes() ?: throw IOException("пустой ответ")
++        }
++    }
++
++    /** Блокирующий вызов, дёргать из IO. Таймаут 30 с, так что зависнуть надолго не может. */
++    fun interrupt() {
++        rest.newCall(Request.Builder().url("$baseUrl/interrupt").post("".toRequestBody()).build())
++            .execute().close()
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/ComfyViewModel.kt b/app/src/main/java/com/lomkich/fxus/comfy/ComfyViewModel.kt
+new file mode 100644
+index 0000000..7e254bd
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/ComfyViewModel.kt
+@@ -0,0 +1,548 @@
++package com.lomkich.fxus.comfy
++
++import android.app.Application
++import android.net.Uri
++import android.provider.OpenableColumns
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateListOf
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.setValue
++import androidx.lifecycle.AndroidViewModel
++import androidx.lifecycle.viewModelScope
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.Job
++import kotlinx.coroutines.flow.SharingStarted
++import kotlinx.coroutines.flow.first
++import kotlinx.coroutines.flow.stateIn
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.sync.Mutex
++import kotlinx.coroutines.sync.withLock
++import kotlinx.coroutines.withContext
++import kotlinx.serialization.json.Json
++import kotlinx.serialization.json.JsonElement
++import kotlinx.serialization.json.JsonObject
++import kotlinx.serialization.json.JsonPrimitive
++import kotlinx.serialization.json.contentOrNull
++import kotlinx.serialization.json.jsonObject
++import kotlinx.serialization.json.jsonPrimitive
++import kotlin.random.Random
++
++private fun JsonObject.patch(node: String, input: String, value: JsonElement): JsonObject {
++    val n = this[node]?.jsonObject ?: error("В workflow нет ноды $node")
++    val inputs = n["inputs"]?.jsonObject ?: error("У ноды $node нет inputs")
++    val newNode = JsonObject(n + ("inputs" to JsonObject(inputs + (input to value))))
++    return JsonObject(this + (node to newNode))
++}
++
++/** Загруженный и разобранный воркфлоу. */
++class LoadedWorkflow(val id: String, val json: JsonObject, val spec: WorkflowSpec) {
++    val title: String get() = WorkflowStore.title(id)
++
++    /** Модель, прописанная в воркфлоу: пока ничего не выбрано, берётся она. */
++    val defaultCkpt: String = spec.checkpoint
++        ?.let { ((json[it] as? JsonObject)?.get("inputs") as? JsonObject)?.get("ckpt_name") }
++        ?.let { (it as? JsonPrimitive)?.contentOrNull }
++        .orEmpty()
++}
++
++/** Строка в списке выбора воркфлоу. */
++data class WorkflowItem(
++    val id: String,
++    val title: String,
++    val note: String,
++    val enabled: Boolean,
++    val canHide: Boolean,
++    val canDelete: Boolean
++)
++
++class ComfyViewModel(app: Application) : AndroidViewModel(app) {
++    private val settings = SettingsStore(app)
++    private val store = HistoryStore(app)
++    private val saveLock = Mutex()
++
++    val serverUrl = settings.url.stateIn(viewModelScope, SharingStarted.Eagerly, "")
++    val tunnel = settings.tunnel.stateIn(viewModelScope, SharingStarted.Eagerly, "")
++    val ckpt = settings.ckpt.stateIn(viewModelScope, SharingStarted.Eagerly, "")
++    val seedFixed = settings.seedFixed.stateIn(viewModelScope, SharingStarted.Eagerly, false)
++    val seedValue = settings.seed.stateIn(viewModelScope, SharingStarted.Eagerly, "")
++
++    val turns = mutableStateListOf<Turn>()
++    var size by mutableStateOf(Size.DEFAULT)
++        private set
++    val recentSizes = settings.recentSizes.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
++
++    /** Ключи уже проигранных анимаций появления (чтобы не повторять при скролле). */
++    val animated: MutableSet<String> = mutableSetOf()
++
++    // id по времени: уникальны и не пересекаются с восстановленными из истории
++    private var nextId = System.currentTimeMillis()
++    private var job: Job? = null
++    private var activeClient: ComfyClient? = null
++
++    private val wfStore = WorkflowStore(app)
++
++    /** Активный воркфлоу; null только в первые миллисекунды после запуска. */
++    var active by mutableStateOf<LoadedWorkflow?>(null)
++        private set
++    var workflowItems by mutableStateOf<List<WorkflowItem>>(emptyList())
++        private set
++    var hiddenItems by mutableStateOf<List<WorkflowItem>>(emptyList())
++        private set
++    private var hidden: Set<String> = emptySet()
++    var wfBusy by mutableStateOf(false)
++        private set
++    var wfStatus by mutableStateOf<String?>(null)
++        private set
++    private var remoteList: List<RemoteWorkflow>? = null
++
++    val defaultCkpt: String get() = active?.defaultCkpt.orEmpty()
++
++    /** Есть ли в воркфлоу нода с моделью (иначе кнопку выбора модели прячем). */
++    val hasCheckpoint: Boolean get() = active?.spec?.checkpoint != null
++
++    private fun loadWorkflow(id: String): LoadedWorkflow {
++        val bytes = wfStore.read(id) ?: throw WorkflowError("Файл воркфлоу не найден")
++        val (json, spec) = WorkflowSpec.parse(bytes)
++        return LoadedWorkflow(id, json, spec)
++    }
++
++    init {
++        viewModelScope.launch {
++            hidden = settings.hiddenWorkflows.first()
++            val id = settings.workflow.first()
++            active = withContext(Dispatchers.IO) {
++                runCatching { loadWorkflow(id) }.getOrElse { loadWorkflow(WorkflowStore.BUILTIN) }
++            }
++            rebuildItems()
++        }
++        viewModelScope.launch { size = settings.size.first() }
++        viewModelScope.launch {
++            val items = withContext(Dispatchers.IO) { store.load() }
++            val restored = items.mapNotNull { s ->
++                val f = store.fileOf(s.file)
++                if (!f.exists()) null else Turn(
++                    id = s.id,
++                    prompt = s.prompt,
++                    size = Size.parse(s.size) ?: Size.DEFAULT,
++                    stage = "",
++                    tags = s.tags,
++                    file = f,
++                    running = false
++                )
++            }
++            restored.forEach {
++                animated.add("u${it.id}")
++                animated.add("b${it.id}")
++            }
++            turns.addAll(0, restored)
++            nextId = maxOf(nextId, (restored.maxOfOrNull { it.id } ?: 0L) + 1)
++        }
++    }
++
++    fun selectSize(s: Size) {
++        size = s
++        viewModelScope.launch {
++            settings.setSize(s)
++            if (Size.PRESETS.none { it.size == s }) settings.rememberCustomSize(s)
++        }
++    }
++
++    fun setCkpt(name: String) {
++        viewModelScope.launch { settings.setCkpt(name) }
++    }
++
++    /** Список чекпоинтов: сначала с основного адреса, потом через туннель; null, если никто не ответил. */
++    suspend fun scanCheckpoints(): List<String>? {
++        val urls = listOf(settings.url.first(), settings.tunnel.first()).filter { it.isNotBlank() }.distinct()
++        return withContext(Dispatchers.IO) {
++            for (u in urls) {
++                val list = runCatching { ComfyClient(u).listCheckpoints().sortedBy { it.lowercase() } }.getOrNull()
++                if (list != null) return@withContext list
++            }
++            null
++        }
++    }
++
++    // ---------- воркфлоу: список, выбор, импорт, синхронизация с ПК ----------
++
++    private fun rebuildItems() {
++        val remote = remoteList
++        val all = mutableListOf<WorkflowItem>()
++        fun add(id: String, note: String, enabled: Boolean = true) {
++            all += WorkflowItem(
++                id = id,
++                title = WorkflowStore.title(id),
++                note = note,
++                enabled = enabled,
++                canHide = id != WorkflowStore.BUILTIN,
++                canDelete = wfStore.exists(id)
++            )
++        }
++        add(WorkflowStore.BUILTIN, "в приложении")
++        remote?.forEach { r ->
++            val id = "pc:${r.name}"
++            val cached = wfStore.hashOf(id)
++            val note = when {
++                !r.valid -> "на ПК · не API-формат"
++                cached == null -> "на ПК · не скачан"
++                cached == r.hash -> "с ПК · актуальный"
++                else -> "с ПК · есть обновление"
++            }
++            add(id, note, r.valid)
++        }
++        val remoteNames = remote?.map { it.name }?.toSet().orEmpty()
++        wfStore.names("pc").filter { it !in remoteNames }.forEach { n ->
++            add("pc:$n", if (remote == null) "с ПК · из кэша" else "с ПК · на ПК удалён")
++        }
++        wfStore.names("local").forEach { n -> add("local:$n", "с телефона") }
++
++        val (hid, vis) = all.partition { it.id in hidden }
++        workflowItems = vis
++        hiddenItems = hid
++    }
++
++    /** Если убрали активный воркфлоу, возвращаемся на встроенный. */
++    private suspend fun fallbackIfActive(id: String) {
++        if (active?.id != id) return
++        active = withContext(Dispatchers.IO) { loadWorkflow(WorkflowStore.BUILTIN) }
++        settings.setWorkflow(WorkflowStore.BUILTIN)
++    }
++
++    fun hideWorkflow(item: WorkflowItem) {
++        if (!item.canHide) return
++        viewModelScope.launch {
++            hidden = hidden + item.id
++            settings.setHiddenWorkflows(hidden)
++            fallbackIfActive(item.id)
++            wfStatus = "«${item.title}» скрыт. Вернуть можно в разделе «Скрытые»"
++            rebuildItems()
++        }
++    }
++
++    fun unhideWorkflow(item: WorkflowItem) {
++        viewModelScope.launch {
++            hidden = hidden - item.id
++            settings.setHiddenWorkflows(hidden)
++            wfStatus = null
++            rebuildItems()
++        }
++    }
++
++    /** Удаляет файл с телефона. Файлы на ПК не трогаем. */
++    fun deleteWorkflow(item: WorkflowItem) {
++        if (!item.canDelete) return
++        viewModelScope.launch {
++            withContext(Dispatchers.IO) { wfStore.delete(item.id) }
++            if (item.id.startsWith("local:") && item.id in hidden) {
++                hidden = hidden - item.id
++                settings.setHiddenWorkflows(hidden)
++            }
++            fallbackIfActive(item.id)
++            val stillOnPc = remoteList?.any { "pc:${it.name}" == item.id } == true
++            wfStatus = if (stillOnPc) {
++                "Удалил копию с телефона. На ПК файл остался: чтобы убрать из списка, скрой его"
++            } else {
++                "Удалил «${item.title}»"
++            }
++            rebuildItems()
++        }
++    }
++
++    /** Адрес, по которому ПК сейчас отвечает: дом, поиск в локалке, туннель. */
++    private suspend fun reachableUrl(): String? {
++        val home = settings.url.first()
++        val tun = settings.tunnel.first()
++        if (home.isNotBlank() && LanDiscovery.ping(home)) return home
++        if (LanDiscovery.isLanUrl(home)) {
++            LanDiscovery.find(LanDiscovery.portOf(home))?.let {
++                settings.setUrl(it)
++                return it
++            }
++        }
++        if (tun.isNotBlank() && LanDiscovery.ping(tun)) return tun
++        return null
++    }
++
++    /** Открытие списка: подтягиваем с ПК, что там лежит, и сверяем с кэшем. */
++    fun refreshWorkflows() {
++        rebuildItems()
++        if (wfBusy) return
++        viewModelScope.launch {
++            wfBusy = true
++            wfStatus = "Ищу ПК…"
++            try {
++                val url = reachableUrl()
++                if (url == null) {
++                    remoteList = null
++                    wfStatus = "ПК недоступен, показываю сохранённые"
++                } else {
++                    val res = withContext(Dispatchers.IO) { runCatching { ComfyClient(url).listWorkflows() } }
++                    res.onSuccess {
++                        remoteList = it.sortedBy { w -> w.name.lowercase() }
++                        wfStatus = if (it.isEmpty()) "На ПК в папке api_workflows пока пусто" else null
++                    }.onFailure {
++                        remoteList = null
++                        wfStatus = if (it.message == "HTTP 404") {
++                            "На ПК нет расширения app_bridge (или ComfyUI не перезапускали)"
++                        } else {
++                            "Не удалось получить список: ${it.message}"
++                        }
++                    }
++                }
++            } finally {
++                wfBusy = false
++                rebuildItems()
++            }
++        }
++    }
++
++    /** Докачивает файл с ПК, если его нет или он изменился. Без связи молча оставляет кэш. */
++    private suspend fun syncPc(id: String) {
++        val name = id.removePrefix("pc:")
++        val remote = remoteList?.firstOrNull { it.name == name }
++        val cached = wfStore.hashOf(id)
++        if (remote == null && cached != null) return
++        if (remote != null && remote.valid && cached == remote.hash) return
++        val url = reachableUrl()
++        if (url == null) {
++            if (cached != null) return
++            throw WorkflowError("ПК недоступен, а файл ещё не скачан")
++        }
++        val bytes = withContext(Dispatchers.IO) { ComfyClient(url).fetchWorkflow(name) }
++        WorkflowSpec.parse(bytes)   // сначала проверяем, потом кладём в кэш
++        wfStore.write(id, bytes)
++    }
++
++    fun selectWorkflow(item: WorkflowItem) {
++        if (wfBusy || !item.enabled) return
++        viewModelScope.launch {
++            wfBusy = true
++            wfStatus = null
++            try {
++                if (item.id.startsWith("pc:")) {
++                    try {
++                        syncPc(item.id)
++                    } catch (e: java.io.IOException) {
++                        if (wfStore.read(item.id) == null) throw WorkflowError("Не удалось скачать: ${e.message}")
++                    }
++                }
++                val loaded = withContext(Dispatchers.IO) { loadWorkflow(item.id) }
++                active = loaded
++                settings.setWorkflow(item.id)
++            } catch (e: WorkflowError) {
++                wfStatus = e.message
++            } catch (e: CancellationException) {
++                throw e
++            } catch (e: Exception) {
++                wfStatus = "Не получилось: ${e.message ?: e}"
++            } finally {
++                wfBusy = false
++                rebuildItems()
++            }
++        }
++    }
++
++    fun importWorkflow(uri: Uri) {
++        viewModelScope.launch {
++            wfBusy = true
++            wfStatus = null
++            try {
++                val ctx = getApplication<Application>()
++                val (name, bytes) = withContext(Dispatchers.IO) {
++                    val n = ctx.contentResolver
++                        .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
++                        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
++                        ?: "workflow.json"
++                    val b = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
++                        ?: throw WorkflowError("Не смог прочитать файл")
++                    if (b.size > 5_000_000) throw WorkflowError("Файл слишком большой для воркфлоу")
++                    n to b
++                }
++                WorkflowSpec.parse(bytes)
++                val clean = name.replace(Regex("[\\\\/:*?\"<>|]"), "_")
++                val id = "local:" + if (clean.endsWith(".json", true)) clean else "$clean.json"
++                wfStore.write(id, bytes)
++                val loaded = withContext(Dispatchers.IO) { loadWorkflow(id) }
++                active = loaded
++                settings.setWorkflow(id)
++                wfStatus = "Импортировал: ${loaded.title}"
++            } catch (e: WorkflowError) {
++                wfStatus = e.message
++            } catch (e: CancellationException) {
++                throw e
++            } catch (e: Exception) {
++                wfStatus = "Не получилось: ${e.message ?: e}"
++            } finally {
++                wfBusy = false
++                rebuildItems()
++            }
++        }
++    }
++
++    /** Перед генерацией: если активный воркфлоу с ПК и там он изменился, берём свежий. Тихо, без ошибок. */
++    private fun quickSync(client: ComfyClient, cur: LoadedWorkflow): LoadedWorkflow? {
++        val name = cur.id.removePrefix("pc:")
++        val r = client.listWorkflows().firstOrNull { it.name == name } ?: return null
++        if (!r.valid || r.hash == wfStore.hashOf(cur.id)) return null
++        val bytes = client.fetchWorkflow(name)
++        val (json, spec) = WorkflowSpec.parse(bytes)
++        wfStore.write(cur.id, bytes)
++        return LoadedWorkflow(cur.id, json, spec)
++    }
++
++    fun saveSettings(url: String, tunnel: String, seedFixed: Boolean, seed: String) {
++        viewModelScope.launch {
++            settings.setUrl(url)
++            settings.setTunnel(tunnel)
++            settings.setSeed(seedFixed, seed)
++        }
++    }
++
++    /** Останавливает локально и сразу (не ждём сервер), а interrupt шлём в фоне «по возможности». */
++    fun stop() {
++        val c = activeClient
++        job?.cancel()
++        if (c != null) viewModelScope.launch(Dispatchers.IO) { runCatching { c.interrupt() } }
++    }
++
++    fun send(raw: String) {
++        val text = raw.trim()
++        if (text.isEmpty() || job?.isActive == true) return
++        val id = nextId++
++        val sizeOpt = size
++        turns.add(Turn(id = id, prompt = text, size = sizeOpt))
++        startGeneration(id, text, sizeOpt)
++    }
++
++    /** Повтор неудавшейся генерации в том же сообщении. */
++    fun retry(id: Long) {
++        if (job?.isActive == true) return
++        val t = turns.firstOrNull { it.id == id } ?: return
++        update(id) { Turn(id = it.id, prompt = it.prompt, size = it.size) }
++        startGeneration(id, t.prompt, t.size)
++    }
++
++    /** Удаляет сообщение вместе с картинкой (и из галереи, и с диска). */
++    fun delete(id: Long) {
++        if (removeTurn(id)) persist()
++    }
++
++    fun deleteMany(ids: Set<Long>) {
++        var changed = false
++        ids.forEach { if (removeTurn(it)) changed = true }
++        if (changed) persist()
++    }
++
++    private fun removeTurn(id: Long): Boolean {
++        val i = turns.indexOfFirst { it.id == id }
++        if (i < 0) return false
++        val t = turns[i]
++        if (t.running) stop()
++        turns.removeAt(i)
++        animated.remove("u$id")
++        animated.remove("b$id")
++        t.file?.let { f ->
++            Thumbs.evict(f.name)
++            viewModelScope.launch(Dispatchers.IO) { f.delete() }
++        }
++        return true
++    }
++
++    private fun persist() {
++        val snapshot = turns.mapNotNull { t ->
++            t.file?.let { Saved(t.id, t.prompt, t.tags, it.name, t.size.key) }
++        }
++        viewModelScope.launch(Dispatchers.IO) {
++            saveLock.withLock { runCatching { store.save(snapshot) } }
++        }
++    }
++
++    private fun startGeneration(id: Long, text: String, sizeOpt: Size) {
++        job = viewModelScope.launch {
++            activeClient = null
++            try {
++                var url = settings.url.first()
++                // адрес в локалке мог поменяться (хотспот выдал другой IP): ищем ПК заново
++                if (LanDiscovery.isLanUrl(url) && !LanDiscovery.ping(url)) {
++                    update(id) { it.copy(stage = "Ищу ПК в сети…") }
++                    val found = LanDiscovery.find(LanDiscovery.portOf(url))
++                    if (found != null) {
++                        url = found
++                        settings.setUrl(found)
++                    } else {
++                        // ПК не в локалке: пробуем туннель
++                        val tun = settings.tunnel.first()
++                        if (tun.isNotBlank() && LanDiscovery.ping(tun)) url = tun
++                    }
++                    update(id) { it.copy(stage = "Отправляю…") }
++                }
++                val client = ComfyClient(url)
++                activeClient = client
++                val fixed = settings.seedFixed.first()
++                val fixedSeed = settings.seed.first().toLongOrNull()
++                val seed = if (fixed && fixedSeed != null) fixedSeed else Random.nextLong() ushr 14
++                var cur = active ?: withContext(Dispatchers.IO) { loadWorkflow(WorkflowStore.BUILTIN) }
++                if (cur.id.startsWith("pc:")) {
++                    val before = cur
++                    val fresh = withContext(Dispatchers.IO) { runCatching { quickSync(client, before) }.getOrNull() }
++                    if (fresh != null) {
++                        cur = fresh
++                        active = fresh
++                    }
++                }
++                val spec = cur.spec
++                var wf = cur.json.patch(spec.prompt.node, spec.prompt.input, JsonPrimitive(text))
++                spec.seed?.let { wf = wf.patch(it.node, it.input, JsonPrimitive(seed)) }
++                spec.latent?.let {
++                    wf = wf.patch(it, "width", JsonPrimitive(sizeOpt.w)).patch(it, "height", JsonPrimitive(sizeOpt.h))
++                }
++                val ck = settings.ckpt.first()
++                val ckNode = spec.checkpoint
++                if (ck.isNotBlank() && ckNode != null) wf = wf.patch(ckNode, "ckpt_name", JsonPrimitive(ck))
++
++                client.generate(wf, spec).collect { ev ->
++                    when (ev) {
++                        is GenEvent.Stage -> update(id) { it.copy(stage = ev.text) }
++                        is GenEvent.Progress -> update(id) { it.copy(percent = ev.value * 100 / ev.max) }
++                        is GenEvent.Preview -> update(id) { it.copy(preview = ev.bitmap) }
++                        is GenEvent.Tags -> update(id) { it.copy(tags = ev.text) }
++                        is GenEvent.Done -> {
++                            update(id) { it.copy(stage = "Загружаю картинку…") }
++                            val bytes = ev.images.firstOrNull()?.let { client.fetchImageBytes(it) }
++                            val file = bytes?.let {
++                                withContext(Dispatchers.IO) {
++                                    // сохраняем оригинал и сразу прогреваем кэш, чтобы не мигало
++                                    store.write(it).also { f -> Thumbs.load(f, 1280) }
++                                }
++                            }
++                            update(id) {
++                                it.copy(
++                                    file = file,
++                                    preview = if (file == null) it.preview else null,
++                                    running = false,
++                                    error = if (file == null) "Не удалось получить картинку" else null
++                                )
++                            }
++                            if (file != null) persist()
++                        }
++                        is GenEvent.Failed -> update(id) { it.copy(error = ev.message, running = false) }
++                    }
++                }
++            } catch (e: CancellationException) {
++                update(id) { it.copy(running = false, error = it.error ?: "Остановлено") }
++                throw e
++            } catch (e: Exception) {
++                update(id) { it.copy(error = e.message ?: e.toString(), running = false) }
++            } finally {
++                // что бы ни случилось, интерфейс не должен остаться «в процессе»
++                update(id) { if (it.running) it.copy(running = false) else it }
++            }
++        }
++    }
++
++    private fun update(id: Long, f: (Turn) -> Turn) {
++        val i = turns.indexOfFirst { it.id == id }
++        if (i >= 0) turns[i] = f(turns[i])
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/Gallery.kt b/app/src/main/java/com/lomkich/fxus/comfy/Gallery.kt
+new file mode 100644
+index 0000000..edbe2c8
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/Gallery.kt
+@@ -0,0 +1,227 @@
++package com.lomkich.fxus.comfy
++
++import androidx.activity.compose.BackHandler
++import androidx.compose.foundation.ExperimentalFoundationApi
++import androidx.compose.foundation.Image
++import androidx.compose.foundation.background
++import androidx.compose.foundation.border
++import androidx.compose.foundation.gestures.detectTapGestures
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.PaddingValues
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.aspectRatio
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.systemBarsPadding
++import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
++import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
++import androidx.compose.foundation.lazy.staggeredgrid.items
++import androidx.compose.foundation.shape.CircleShape
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.automirrored.filled.ArrowBack
++import androidx.compose.material.icons.filled.Check
++import androidx.compose.material.icons.filled.Close
++import androidx.compose.material.icons.filled.Delete
++import androidx.compose.material3.AlertDialog
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberUpdatedState
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.graphics.asImageBitmap
++import androidx.compose.ui.graphics.graphicsLayer
++import androidx.compose.ui.hapticfeedback.HapticFeedbackType
++import androidx.compose.ui.input.pointer.pointerInput
++import androidx.compose.ui.layout.ContentScale
++import androidx.compose.ui.platform.LocalHapticFeedback
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
++
++@OptIn(ExperimentalFoundationApi::class)
++@Composable
++fun GalleryScreen(
++    turns: List<Turn>,
++    onOpen: (Long) -> Unit,
++    onDeleteMany: (Set<Long>) -> Unit,
++    onClose: () -> Unit
++) {
++    val cs = MaterialTheme.colorScheme
++    val done = turns.filter { it.file != null }.asReversed()
++    var selected by remember { mutableStateOf(setOf<Long>()) }
++    var confirm by remember { mutableStateOf(false) }
++    val selecting = selected.isNotEmpty()
++
++    // первый «назад» выходит из режима выбора, второй закрывает галерею
++    BackHandler(enabled = selecting) { selected = emptySet() }
++
++    val toggle = { id: Long -> selected = if (id in selected) selected - id else selected + id }
++
++    Column(
++        Modifier
++            .fillMaxSize()
++            .background(cs.background)
++            // экран лежит поверх чата, поэтому нажатия не должны проваливаться вниз
++            .pointerInput(Unit) { detectTapGestures { } }
++            .systemBarsPadding()
++    ) {
++        Row(
++            Modifier
++                .fillMaxWidth()
++                .padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
++            verticalAlignment = Alignment.CenterVertically
++        ) {
++            if (selecting) {
++                IconButton(onClick = { selected = emptySet() }) {
++                    Icon(Icons.Filled.Close, contentDescription = "Отменить выбор", tint = cs.onSurfaceVariant)
++                }
++                Text(
++                    "Выбрано: ${selected.size}",
++                    style = MaterialTheme.typography.titleLarge,
++                    color = cs.onBackground
++                )
++                Spacer(Modifier.weight(1f))
++                TextButton(onClick = { selected = done.map { it.id }.toSet() }) { Text("Все") }
++                IconButton(onClick = { confirm = true }) {
++                    Icon(Icons.Filled.Delete, contentDescription = "Удалить", tint = cs.error)
++                }
++            } else {
++                IconButton(onClick = onClose) {
++                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад", tint = cs.onSurfaceVariant)
++                }
++                Text("Галерея", style = MaterialTheme.typography.titleLarge, color = cs.onBackground)
++                Spacer(Modifier.weight(1f))
++                if (done.isNotEmpty()) Text("${done.size}", color = cs.onSurfaceVariant)
++            }
++        }
++
++        if (done.isEmpty()) {
++            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
++                Text(
++                    "Пока пусто.\nСгенерированные картинки появятся здесь.",
++                    color = cs.onSurfaceVariant,
++                    modifier = Modifier.padding(32.dp)
++                )
++            }
++        } else {
++            LazyVerticalStaggeredGrid(
++                columns = StaggeredGridCells.Fixed(2),
++                modifier = Modifier.weight(1f).fillMaxWidth(),
++                contentPadding = PaddingValues(12.dp),
++                verticalItemSpacing = 14.dp,
++                horizontalArrangement = Arrangement.spacedBy(12.dp)
++            ) {
++                items(done, key = { it.id }) { t ->
++                    GalleryCell(
++                        t = t,
++                        selected = t.id in selected,
++                        onTap = { if (selecting) toggle(t.id) else onOpen(t.id) },
++                        onLongPress = { toggle(t.id) }
++                    )
++                }
++            }
++        }
++    }
++
++    if (confirm) {
++        AlertDialog(
++            onDismissRequest = { confirm = false },
++            title = { Text("Удалить выбранное?") },
++            text = {
++                Text("Будет удалено: ${selected.size} (картинки и сообщения). Это нельзя отменить.")
++            },
++            confirmButton = {
++                TextButton(onClick = {
++                    onDeleteMany(selected)
++                    selected = emptySet()
++                    confirm = false
++                }) { Text("Удалить", color = cs.error) }
++            },
++            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Отмена") } }
++        )
++    }
++}
++
++@Composable
++private fun GalleryCell(t: Turn, selected: Boolean, onTap: () -> Unit, onLongPress: () -> Unit) {
++    val cs = MaterialTheme.colorScheme
++    val haptic = LocalHapticFeedback.current
++    val bmp = rememberFileBitmap(t.file, 480)
++    val tap by rememberUpdatedState(onTap)
++    val long by rememberUpdatedState(onLongPress)
++
++    Column(
++        Modifier
++            .clip(RoundedCornerShape(12.dp))
++            .pointerInput(Unit) {
++                detectTapGestures(
++                    onTap = { tap() },
++                    onLongPress = {
++                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
++                        long()
++                    }
++                )
++            }
++    ) {
++        Box(
++            Modifier
++                .fillMaxWidth()
++                .aspectRatio(t.size.w.toFloat() / t.size.h)
++                .clip(RoundedCornerShape(12.dp))
++                .background(cs.surface)
++        ) {
++            if (bmp != null) {
++                val img = remember(bmp) { bmp.asImageBitmap() }
++                Image(
++                    bitmap = img,
++                    contentDescription = null,
++                    modifier = Modifier
++                        .fillMaxSize()
++                        .graphicsLayer { alpha = if (selected) 0.6f else 1f },
++                    contentScale = ContentScale.Crop
++                )
++            }
++            if (selected) {
++                Box(Modifier.fillMaxSize().border(3.dp, cs.primary, RoundedCornerShape(12.dp)))
++                Box(
++                    Modifier
++                        .align(Alignment.TopEnd)
++                        .padding(8.dp)
++                        .size(24.dp)
++                        .background(cs.primary, CircleShape),
++                    contentAlignment = Alignment.Center
++                ) {
++                    Icon(
++                        Icons.Filled.Check,
++                        contentDescription = null,
++                        tint = cs.onPrimary,
++                        modifier = Modifier.size(16.dp)
++                    )
++                }
++            }
++        }
++        Text(
++            t.prompt,
++            maxLines = 2,
++            overflow = TextOverflow.Ellipsis,
++            fontSize = 12.sp,
++            color = cs.onSurfaceVariant,
++            modifier = Modifier.padding(horizontal = 2.dp, vertical = 6.dp)
++        )
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/HistoryStore.kt b/app/src/main/java/com/lomkich/fxus/comfy/HistoryStore.kt
+new file mode 100644
+index 0000000..2430efd
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/HistoryStore.kt
+@@ -0,0 +1,45 @@
++package com.lomkich.fxus.comfy
++
++import android.content.Context
++import kotlinx.serialization.Serializable
++import kotlinx.serialization.builtins.ListSerializer
++import kotlinx.serialization.json.Json
++import java.io.File
++import java.util.UUID
++
++@Serializable
++data class Saved(
++    val id: Long,
++    val prompt: String,
++    val tags: String? = null,
++    val file: String,
++    val size: String
++)
++
++/** Картинки лежат в папке history внутри filesDir (оригиналы PNG от ComfyUI), список в index.json. */
++class HistoryStore(ctx: Context) {
++    private val dir = File(ctx.filesDir, "history").also { it.mkdirs() }
++    private val index = File(dir, "index.json")
++    private val json = Json { ignoreUnknownKeys = true }
++    private val serializer = ListSerializer(Saved.serializer())
++
++    fun fileOf(name: String) = File(dir, name)
++
++    fun write(bytes: ByteArray): File {
++        val f = File(dir, "${UUID.randomUUID()}.png")
++        f.writeBytes(bytes)
++        return f
++    }
++
++    fun load(): List<Saved> = try {
++        if (index.exists()) json.decodeFromString(serializer, index.readText()) else emptyList()
++    } catch (e: Exception) {
++        emptyList()
++    }
++
++    fun save(list: List<Saved>) {
++        val tmp = File(dir, "index.json.tmp")
++        tmp.writeText(json.encodeToString(serializer, list))
++        tmp.renameTo(index)
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/ImageActions.kt b/app/src/main/java/com/lomkich/fxus/comfy/ImageActions.kt
+new file mode 100644
+index 0000000..4e2b13f
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/ImageActions.kt
+@@ -0,0 +1,62 @@
++package com.lomkich.fxus.comfy
++
++import android.content.ClipData
++import android.content.ClipboardManager
++import android.content.ContentValues
++import android.content.Context
++import android.content.Intent
++import android.net.Uri
++import android.os.Environment
++import android.provider.MediaStore
++import androidx.core.content.FileProvider
++import java.io.File
++
++object ImageActions {
++    private fun uriFor(ctx: Context, file: File): Uri =
++        FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
++
++    /** Сохраняет в галерею телефона: Pictures/ComfyChat. */
++    fun save(ctx: Context, file: File): Boolean {
++        val values = ContentValues().apply {
++            put(MediaStore.Images.Media.DISPLAY_NAME, "ComfyChat_${System.currentTimeMillis()}.png")
++            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
++            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/ComfyChat")
++            put(MediaStore.Images.Media.IS_PENDING, 1)
++        }
++        val resolver = ctx.contentResolver
++        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
++        return try {
++            val out = resolver.openOutputStream(uri) ?: error("нет потока записи")
++            out.use { o -> file.inputStream().use { it.copyTo(o) } }
++            values.clear()
++            values.put(MediaStore.Images.Media.IS_PENDING, 0)
++            resolver.update(uri, values, null, null)
++            true
++        } catch (e: Exception) {
++            resolver.delete(uri, null, null)
++            false
++        }
++    }
++
++    /** Кладёт саму картинку в буфер обмена. */
++    fun copyImage(ctx: Context, file: File): Boolean = try {
++        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
++        cm.setPrimaryClip(ClipData.newUri(ctx.contentResolver, "Изображение", uriFor(ctx, file)))
++        true
++    } catch (e: Exception) {
++        false
++    }
++
++    fun share(ctx: Context, file: File) {
++        val uri = uriFor(ctx, file)
++        val send = Intent(Intent.ACTION_SEND).apply {
++            type = "image/png"
++            putExtra(Intent.EXTRA_STREAM, uri)
++            clipData = ClipData.newRawUri("", uri)
++            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
++        }
++        val chooser = Intent.createChooser(send, "Поделиться")
++            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
++        ctx.startActivity(chooser)
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/ImageChatScreen.kt b/app/src/main/java/com/lomkich/fxus/comfy/ImageChatScreen.kt
+new file mode 100644
+index 0000000..26ad4d2
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/ImageChatScreen.kt
+@@ -0,0 +1,803 @@
++package com.lomkich.fxus.comfy
++
++import kotlinx.coroutines.Job
++import androidx.compose.foundation.layout.width
++import androidx.compose.ui.layout.boundsInRoot
++import androidx.compose.ui.layout.onGloballyPositioned
++import androidx.compose.ui.geometry.Rect
++import android.os.Build
++import android.widget.Toast
++import androidx.activity.compose.BackHandler
++import androidx.activity.compose.rememberLauncherForActivityResult
++import androidx.activity.result.contract.ActivityResultContracts
++import androidx.compose.animation.AnimatedVisibility
++import androidx.compose.animation.animateColorAsState
++import androidx.compose.animation.core.Animatable
++import androidx.compose.animation.core.FastOutSlowInEasing
++import androidx.compose.animation.core.Spring
++import androidx.compose.animation.core.animateFloatAsState
++import androidx.compose.animation.core.spring
++import androidx.compose.animation.core.tween
++import androidx.compose.animation.fadeIn
++import androidx.compose.animation.fadeOut
++import androidx.compose.animation.slideInHorizontally
++import androidx.compose.animation.slideOutHorizontally
++import androidx.compose.foundation.BorderStroke
++import androidx.compose.foundation.Image
++import androidx.compose.foundation.background
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.gestures.detectTapGestures
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.PaddingValues
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.aspectRatio
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.imePadding
++import androidx.compose.foundation.layout.navigationBarsPadding
++import androidx.compose.foundation.layout.statusBarsPadding
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.systemBarsPadding
++import androidx.compose.runtime.mutableIntStateOf
++import androidx.compose.ui.graphics.Brush
++import androidx.compose.foundation.text.KeyboardOptions
++import androidx.compose.foundation.layout.widthIn
++import androidx.compose.foundation.lazy.LazyColumn
++import androidx.compose.foundation.lazy.items
++import androidx.compose.foundation.lazy.rememberLazyListState
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.automirrored.filled.Send
++import androidx.compose.material.icons.filled.Close
++import androidx.compose.material.icons.filled.Menu
++import androidx.compose.material.icons.filled.Settings
++import androidx.compose.material3.AlertDialog
++import androidx.compose.material3.AssistChip
++import androidx.compose.material3.DropdownMenu
++import androidx.compose.material3.DropdownMenuItem
++import androidx.compose.material3.FilledIconButton
++import androidx.compose.material3.FilterChip
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
++import androidx.compose.material3.IconButtonDefaults
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.OutlinedButton
++import androidx.compose.material3.OutlinedTextField
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Switch
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.material3.Typography
++import androidx.compose.material3.TextField
++import androidx.compose.material3.TextFieldDefaults
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.asImageBitmap
++import androidx.compose.ui.graphics.graphicsLayer
++import androidx.compose.ui.hapticfeedback.HapticFeedbackType
++import androidx.compose.ui.input.pointer.pointerInput
++import androidx.compose.ui.layout.ContentScale
++import androidx.compose.ui.platform.LocalClipboardManager
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.platform.LocalDensity
++import androidx.compose.ui.layout.onSizeChanged
++import androidx.compose.ui.platform.LocalHapticFeedback
++import androidx.compose.ui.text.AnnotatedString
++import androidx.compose.ui.text.TextStyle
++import androidx.compose.ui.text.font.FontFamily
++import androidx.compose.ui.text.input.KeyboardType
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
++import androidx.lifecycle.compose.collectAsStateWithLifecycle
++import kotlinx.coroutines.delay
++import kotlinx.coroutines.launch
++import kotlin.random.Random
++
++/** Насколько низ темнее фона (0 = цвет фона, 1 = чёрный) и его непрозрачность у самого края. */
++private const val SCRIM_DARKEN = 0.45f
++private const val SCRIM_ALPHA = 0.92f
++
++/** Высота плавного перехода под шапкой. */
++private val HEADER_FADE = 28.dp
++
++/** Типографика ComfyChat (засечки в заголовках): действует только внутри экрана картинок. */
++private val ComfyTypography = Typography(
++    headlineSmall = TextStyle(fontFamily = FontFamily.Serif, fontSize = 26.sp, lineHeight = 32.sp),
++    titleLarge = TextStyle(fontFamily = FontFamily.Serif, fontSize = 21.sp, lineHeight = 26.sp)
++)
++
++/**
++ * Чат генерации изображений (бывший ComfyChat). Цвета берёт из общей темы приложения.
++ * onMenu открывает главное меню; openGallery просит показать галерею, после показа зовём onGalleryHandled.
++ */
++@Composable
++fun ImageChatScreen(
++    vm: ComfyViewModel,
++    onMenu: () -> Unit,
++    openGallery: Boolean = false,
++    onGalleryHandled: () -> Unit = {},
++) {
++    MaterialTheme(colorScheme = MaterialTheme.colorScheme, typography = ComfyTypography) {
++        ImageChatContent(vm, onMenu, openGallery, onGalleryHandled)
++    }
++}
++
++@Composable
++private fun ImageChatContent(
++    vm: ComfyViewModel,
++    onMenu: () -> Unit,
++    openGallery: Boolean,
++    onGalleryHandled: () -> Unit,
++) {
++    val cs = MaterialTheme.colorScheme
++    val url by vm.serverUrl.collectAsStateWithLifecycle()
++    val tunnel by vm.tunnel.collectAsStateWithLifecycle()
++    val seedFixed by vm.seedFixed.collectAsStateWithLifecycle()
++    val seedValue by vm.seedValue.collectAsStateWithLifecycle()
++    val ckpt by vm.ckpt.collectAsStateWithLifecycle()
++    val recent by vm.recentSizes.collectAsStateWithLifecycle()
++    val effectiveCkpt = ckpt.ifBlank { vm.defaultCkpt }
++    val scope = rememberCoroutineScope()
++    val sizeRect = remember { RectHolder() }
++    val ckptRect = remember { RectHolder() }
++    var sizeAnchor by remember { mutableStateOf<Rect?>(null) }
++    var ckptAnchor by remember { mutableStateOf<Rect?>(null) }
++    var models by remember { mutableStateOf<List<String>?>(null) }
++    var scanning by remember { mutableStateOf(false) }
++    var scanErr by remember { mutableStateOf<String?>(null) }
++    var scanJob by remember { mutableStateOf<Job?>(null) }
++    val running = vm.turns.lastOrNull()?.running == true
++    var input by remember { mutableStateOf("") }
++    var settingsAnchor by remember { mutableStateOf<Rect?>(null) }
++    val settingsRect = remember { RectHolder() }
++    var wfAnchor by remember { mutableStateOf<Rect?>(null) }
++    val wfRect = remember { RectHolder() }
++    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
++        if (uri != null) vm.importWorkflow(uri)
++    }
++    var showGallery by remember { mutableStateOf(false) }
++    LaunchedEffect(openGallery) {
++        if (openGallery) {
++            showGallery = true
++            onGalleryHandled()
++        }
++    }
++    var viewingId by remember { mutableStateOf<Long?>(null) }
++    var confirmDeleteId by remember { mutableStateOf<Long?>(null) }
++    val listState = rememberLazyListState()
++
++    // главный экран слегка уезжает вправо, пока галерея наезжает слева
++    val shift by animateFloatAsState(
++        targetValue = if (showGallery) 1f else 0f,
++        animationSpec = tween(380, easing = FastOutSlowInEasing),
++        label = "shift"
++    )
++
++    BackHandler(enabled = showGallery) { showGallery = false }
++
++    LaunchedEffect(vm.turns.size) {
++        if (vm.turns.isNotEmpty()) listState.animateScrollToItem(vm.turns.lastIndex)
++    }
++
++    Box(Modifier.fillMaxSize().background(cs.background)) {
++        // Контент рисуется на весь экран (под статус-баром и панелью навигации):
++        // список лежит на всю высоту, шапка и пузырь ввода парят поверх него.
++        Box(
++            Modifier
++                .fillMaxSize()
++                .graphicsLayer { translationX = shift * size.width * 0.12f }
++                .imePadding()
++        ) {
++            val density = LocalDensity.current
++            var headerPx by remember { mutableIntStateOf(0) }
++            var bottomPx by remember { mutableIntStateOf(0) }
++            val topPad = with(density) { headerPx.toDp() }
++            val bottomPad = with(density) { bottomPx.toDp() }
++            // низ чуть темнее фона: сильнее всего у панели навигации, плавно сходит на нет вверх
++            val scrimBottom = remember(cs.background) {
++                androidx.compose.ui.graphics.lerp(cs.background, Color.Black, SCRIM_DARKEN)
++                    .copy(alpha = SCRIM_ALPHA)
++            }
++
++            if (vm.turns.isEmpty()) {
++                Text(
++                    "Что нарисуем?",
++                    style = MaterialTheme.typography.headlineSmall,
++                    color = cs.onSurfaceVariant,
++                    modifier = Modifier
++                        .align(Alignment.Center)
++                        .padding(top = topPad, bottom = bottomPad)
++                )
++            } else {
++                LazyColumn(
++                    state = listState,
++                    modifier = Modifier.fillMaxSize(),
++                    contentPadding = PaddingValues(
++                        start = 16.dp,
++                        end = 16.dp,
++                        top = topPad + 8.dp,
++                        bottom = bottomPad + 8.dp
++                    ),
++                    verticalArrangement = Arrangement.spacedBy(24.dp)
++                ) {
++                    items(vm.turns, key = { it.id }) { t ->
++                        TurnItem(
++                            t,
++                            seen = vm.animated,
++                            onOpen = { viewingId = it },
++                            onRetry = vm::retry,
++                            onDelete = { confirmDeleteId = it }
++                        )
++                    }
++                }
++            }
++
++            // верх: шапка (фон доходит до верха экрана под статус-баром) и плавный переход цвета шапки вниз
++            Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
++                Box(
++                    Modifier
++                        .fillMaxWidth()
++                        .background(cs.background)
++                        .onSizeChanged { headerPx = it.height }
++                        .statusBarsPadding()
++                ) {
++            Row(
++                Modifier
++                    .fillMaxWidth()
++                    .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
++                verticalAlignment = Alignment.CenterVertically
++            ) {
++                IconButton(onClick = onMenu) {
++                    Icon(Icons.Filled.Menu, contentDescription = "Меню", tint = cs.onSurfaceVariant)
++                }
++                Text("Изображения", style = MaterialTheme.typography.titleLarge, color = cs.onBackground)
++                Spacer(Modifier.weight(1f))
++                AssistChip(
++                    onClick = {
++                        wfAnchor = wfRect.r
++                        vm.refreshWorkflows()
++                    },
++                    label = {
++                        Text(
++                            vm.active?.title ?: "Воркфлоу",
++                            maxLines = 1,
++                            overflow = TextOverflow.Ellipsis
++                        )
++                    },
++                    modifier = Modifier
++                        .widthIn(max = 170.dp)
++                        .onGloballyPositioned { wfRect.r = it.boundsInRoot() }
++                )
++                IconButton(
++                    onClick = { settingsAnchor = settingsRect.r },
++                    modifier = Modifier.onGloballyPositioned { settingsRect.r = it.boundsInRoot() }
++                ) {
++                    Icon(Icons.Filled.Settings, contentDescription = "Настройки", tint = cs.onSurfaceVariant)
++                }
++            }
++
++                }
++                Box(
++                    Modifier
++                        .fillMaxWidth()
++                        .height(HEADER_FADE)
++                        .background(Brush.verticalGradient(listOf(cs.background, Color.Transparent)))
++                )
++            }
++
++            // низ: пузырь ввода без подложки, под ним градиент до панели навигации
++            Box(
++                Modifier
++                    .align(Alignment.BottomCenter)
++                    .fillMaxWidth()
++                    .onSizeChanged { bottomPx = it.height }
++                    .background(Brush.verticalGradient(listOf(Color.Transparent, scrimBottom)))
++                    .navigationBarsPadding()
++            ) {
++            Surface(
++                modifier = Modifier.fillMaxWidth().padding(12.dp),
++                shape = RoundedCornerShape(24.dp),
++                color = cs.surface,
++                border = BorderStroke(1.dp, cs.outline)
++            ) {
++                Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
++                    TextField(
++                        value = input,
++                        onValueChange = { input = it },
++                        placeholder = { Text("Опиши картинку по-русски…") },
++                        modifier = Modifier.fillMaxWidth(),
++                        maxLines = 5,
++                        colors = TextFieldDefaults.colors(
++                            focusedContainerColor = Color.Transparent,
++                            unfocusedContainerColor = Color.Transparent,
++                            focusedIndicatorColor = Color.Transparent,
++                            unfocusedIndicatorColor = Color.Transparent
++                        )
++                    )
++                    Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
++                        AssistChip(
++                            onClick = { sizeAnchor = sizeRect.r },
++                            label = { Text(vm.size.label) },
++                            leadingIcon = { RatioIcon(vm.size.w, vm.size.h) },
++                            modifier = Modifier.onGloballyPositioned { sizeRect.r = it.boundsInRoot() }
++                        )
++                        Spacer(Modifier.width(8.dp))
++                        if (vm.hasCheckpoint) AssistChip(
++                            onClick = {
++                                ckptAnchor = ckptRect.r
++                                models = null
++                                scanErr = null
++                                scanning = true
++                                scanJob?.cancel()
++                                scanJob = scope.launch {
++                                    val list = vm.scanCheckpoints()
++                                    scanning = false
++                                    when {
++                                        list == null -> scanErr = "Не достучался до ComfyUI"
++                                        list.isEmpty() -> scanErr = "Моделей на сервере нет"
++                                        else -> models = list
++                                    }
++                                }
++                            },
++                            label = {
++                                Text(
++                                    if (effectiveCkpt.isBlank()) "Модель" else modelTitle(effectiveCkpt),
++                                    maxLines = 1,
++                                    overflow = TextOverflow.Ellipsis
++                                )
++                            },
++                            modifier = Modifier
++                                .weight(1f)
++                                .onGloballyPositioned { ckptRect.r = it.boundsInRoot() }
++                        ) else Spacer(Modifier.weight(1f))
++                        Spacer(Modifier.width(8.dp))
++                        FilledIconButton(
++                            onClick = {
++                                if (running) vm.stop() else {
++                                    vm.send(input)
++                                    input = ""
++                                }
++                            },
++                            enabled = running || input.isNotBlank(),
++                            colors = IconButtonDefaults.filledIconButtonColors(
++                                containerColor = cs.primary,
++                                contentColor = cs.onPrimary
++                            )
++                        ) {
++                            Icon(
++                                if (running) Icons.Filled.Close else Icons.AutoMirrored.Filled.Send,
++                                contentDescription = if (running) "Стоп" else "Отправить"
++                            )
++                        }
++                    }
++                }
++            }
++            }
++        }
++
++        // затемнение главного экрана под галереей
++        AnimatedVisibility(
++            visible = showGallery,
++            enter = fadeIn(tween(380)),
++            exit = fadeOut(tween(300))
++        ) {
++            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
++        }
++
++        // галерея наезжает слева
++        AnimatedVisibility(
++            visible = showGallery,
++            enter = slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it },
++            exit = slideOutHorizontally(tween(300, easing = FastOutSlowInEasing)) { -it }
++        ) {
++            GalleryScreen(
++                turns = vm.turns,
++                onOpen = { viewingId = it },
++                onDeleteMany = vm::deleteMany,
++                onClose = { showGallery = false }
++            )
++        }
++
++        MorphPopup(
++            anchor = settingsAnchor,
++            placement = MorphPlacement.CENTER,
++            color = cs.surfaceContainerHigh,
++            startRadius = 24.dp,
++            endRadius = 28.dp,
++            scrimAlpha = 0.35f,
++            onDismiss = { settingsAnchor = null }
++        ) {
++            SettingsContent(
++                url = url,
++                tunnel = tunnel,
++                seedFixed = seedFixed,
++                seedValue = seedValue,
++                onSave = { u, t, f, sd ->
++                    vm.saveSettings(u, t, f, sd)
++                    settingsAnchor = null
++                },
++                onDismiss = { settingsAnchor = null }
++            )
++        }
++
++        MorphPopup(
++            anchor = wfAnchor,
++            placement = MorphPlacement.CENTER,
++            color = cs.surfaceContainerHigh,
++            startRadius = 8.dp,
++            endRadius = 28.dp,
++            scrimAlpha = 0.35f,
++            onDismiss = { wfAnchor = null }
++        ) {
++            WorkflowPickerContent(
++                items = vm.workflowItems,
++                hiddenItems = vm.hiddenItems,
++                onHide = { vm.hideWorkflow(it) },
++                onUnhide = { vm.unhideWorkflow(it) },
++                onDelete = { vm.deleteWorkflow(it) },
++                selectedId = vm.active?.id.orEmpty(),
++                busy = vm.wfBusy,
++                status = vm.wfStatus,
++                onPick = { vm.selectWorkflow(it) },
++                onRefresh = { vm.refreshWorkflows() },
++                onImport = { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
++                onClose = { wfAnchor = null }
++            )
++        }
++
++        MorphPopup(
++            anchor = sizeAnchor,
++            placement = MorphPlacement.CENTER,
++            color = cs.surfaceContainerHigh,
++            startRadius = 8.dp,
++            endRadius = 28.dp,
++            scrimAlpha = 0.35f,
++            onDismiss = { sizeAnchor = null }
++        ) {
++            SizePickerContent(
++                current = vm.size,
++                recent = recent,
++                onPick = { vm.selectSize(it); sizeAnchor = null },
++                onCancel = { sizeAnchor = null }
++            )
++        }
++
++        MorphPopup(
++            anchor = ckptAnchor,
++            placement = MorphPlacement.ABOVE,
++            color = cs.surfaceContainer,
++            startRadius = 8.dp,
++            endRadius = 16.dp,
++            scrimAlpha = 0f,
++            onDismiss = { ckptAnchor = null }
++        ) {
++            CheckpointListContent(
++                models = models,
++                scanning = scanning,
++                error = scanErr,
++                selected = effectiveCkpt,
++                onPick = { vm.setCkpt(it); ckptAnchor = null }
++            )
++        }
++    }
++
++    viewingId?.let { id ->
++        vm.turns.firstOrNull { it.id == id }?.let { t ->
++            ImageViewer(t, onDismiss = { viewingId = null }, onDelete = { confirmDeleteId = id })
++        }
++    }
++
++    confirmDeleteId?.let { id ->
++        AlertDialog(
++            onDismissRequest = { confirmDeleteId = null },
++            title = { Text("Удалить?") },
++            text = { Text("Сообщение и картинка будут удалены без возможности восстановления.") },
++            confirmButton = {
++                TextButton(onClick = {
++                    vm.delete(id)
++                    if (viewingId == id) viewingId = null
++                    confirmDeleteId = null
++                }) { Text("Удалить", color = cs.error) }
++            },
++            dismissButton = { TextButton(onClick = { confirmDeleteId = null }) { Text("Отмена") } }
++        )
++    }
++}
++
++/** Плавный выезд снизу с пружиной. Играет один раз на ключ, потом сразу рисуется на месте. */
++@Composable
++private fun SlideIn(
++    key: String,
++    seen: MutableSet<String>,
++    delayMs: Long,
++    content: @Composable () -> Unit
++) {
++    val progress = remember { Animatable(if (key in seen) 0f else 1f) }
++    val distance = with(LocalDensity.current) { 360.dp.toPx() }
++    LaunchedEffect(Unit) {
++        val play = progress.value > 0f
++        seen.add(key)
++        if (play) {
++            delay(delayMs)
++            progress.animateTo(
++                0f,
++                spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow)
++            )
++        }
++    }
++    Box(
++        Modifier.graphicsLayer {
++            translationY = progress.value * distance
++            alpha = (1f - progress.value * 1.5f).coerceIn(0f, 1f)
++        }
++    ) { content() }
++}
++
++@Composable
++private fun TurnItem(
++    t: Turn,
++    seen: MutableSet<String>,
++    onOpen: (Long) -> Unit,
++    onRetry: (Long) -> Unit,
++    onDelete: (Long) -> Unit
++) {
++    val cs = MaterialTheme.colorScheme
++    Column {
++        SlideIn("u${t.id}", seen, 0L) { UserBubble(t.prompt, onDelete = { onDelete(t.id) }) }
++        Spacer(Modifier.height(12.dp))
++        SlideIn("b${t.id}", seen, 150L) {
++            Column {
++                ImageCard(t, onOpen)
++                if (!t.running && t.error != null && t.file == null) {
++                    TextButton(onClick = { onRetry(t.id) }) { Text("Повторить") }
++                }
++                if (t.running) {
++                    Text(
++                        t.stage,
++                        modifier = Modifier.padding(top = 8.dp, start = 4.dp),
++                        color = cs.onSurfaceVariant,
++                        fontSize = 13.sp
++                    )
++                }
++                t.tags?.let { tags ->
++                    var open by remember(t.id) { mutableStateOf(false) }
++                    Text(
++                        tags,
++                        modifier = Modifier
++                            .padding(top = 8.dp, start = 4.dp)
++                            .clickable { open = !open },
++                        color = cs.onSurfaceVariant,
++                        fontSize = 12.sp,
++                        maxLines = if (open) Int.MAX_VALUE else 2,
++                        overflow = TextOverflow.Ellipsis
++                    )
++                }
++            }
++        }
++    }
++}
++
++/** Пузырь пользователя: зажатие подсвечивает его и открывает меню (как в Telegram). */
++@Composable
++private fun UserBubble(text: String, onDelete: () -> Unit) {
++    val cs = MaterialTheme.colorScheme
++    val clipboard = LocalClipboardManager.current
++    val haptic = LocalHapticFeedback.current
++    val ctx = LocalContext.current
++    var pressed by remember { mutableStateOf(false) }
++    var menu by remember { mutableStateOf(false) }
++    val color by animateColorAsState(
++        if (pressed || menu) cs.outline else cs.surfaceVariant,
++        label = "bubble"
++    )
++
++    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
++        Box {
++            Surface(
++                shape = RoundedCornerShape(18.dp),
++                color = color,
++                modifier = Modifier
++                    .widthIn(max = 300.dp)
++                    .pointerInput(Unit) {
++                        detectTapGestures(
++                            onPress = {
++                                pressed = true
++                                tryAwaitRelease()
++                                pressed = false
++                            },
++                            onLongPress = {
++                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
++                                menu = true
++                            }
++                        )
++                    }
++            ) {
++                Text(
++                    text,
++                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
++                    color = cs.onSurface
++                )
++            }
++            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
++                DropdownMenuItem(
++                    text = { Text("Копировать") },
++                    onClick = {
++                        clipboard.setText(AnnotatedString(text))
++                        menu = false
++                        // с Android 13 система сама показывает плашку о копировании
++                        if (Build.VERSION.SDK_INT < 33) {
++                            Toast.makeText(ctx, "Скопировано", Toast.LENGTH_SHORT).show()
++                        }
++                    }
++                )
++                DropdownMenuItem(
++                    text = { Text("Удалить", color = cs.error) },
++                    onClick = {
++                        menu = false
++                        onDelete()
++                    }
++                )
++            }
++        }
++    }
++}
++
++@Composable
++private fun ImageCard(t: Turn, onOpen: (Long) -> Unit) {
++    val cs = MaterialTheme.colorScheme
++    val fileBmp = rememberFileBitmap(t.file, 1280)
++    val shown = fileBmp ?: t.preview
++    Box(
++        Modifier
++            .fillMaxWidth()
++            .aspectRatio(t.size.w.toFloat() / t.size.h)
++            .clip(RoundedCornerShape(16.dp))
++            .background(cs.surface)
++            .clickable(enabled = t.file != null) { onOpen(t.id) }
++    ) {
++        if (shown != null) {
++            val img = remember(shown) { shown.asImageBitmap() }
++            Image(
++                bitmap = img,
++                contentDescription = null,
++                modifier = Modifier.fillMaxSize(),
++                contentScale = ContentScale.Fit
++            )
++        } else if (t.file == null) {
++            Text(
++                t.error ?: t.stage,
++                modifier = Modifier.align(Alignment.Center).padding(24.dp),
++                color = if (t.error != null) cs.error else cs.onSurfaceVariant
++            )
++        }
++        val p = t.percent
++        if (t.running && p != null) {
++            Text(
++                "$p%",
++                modifier = Modifier
++                    .align(Alignment.TopEnd)
++                    .padding(10.dp)
++                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
++                    .padding(horizontal = 8.dp, vertical = 4.dp),
++                color = Color.White,
++                fontFamily = FontFamily.Monospace,
++                fontSize = 13.sp
++            )
++        }
++    }
++    val err = t.error
++    if (shown != null && err != null) {
++        Text(err, color = cs.error, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, start = 4.dp))
++    }
++}
++
++@Composable
++private fun SettingsContent(
++    url: String,
++    tunnel: String,
++    seedFixed: Boolean,
++    seedValue: String,
++    onSave: (String, String, Boolean, String) -> Unit,
++    onDismiss: () -> Unit
++) {
++    val cs = MaterialTheme.colorScheme
++    var u by remember { mutableStateOf(url) }
++    var tun by remember { mutableStateOf(tunnel) }
++    var fixed by remember { mutableStateOf(seedFixed) }
++    var seed by remember { mutableStateOf(seedValue) }
++    val scope = rememberCoroutineScope()
++    val clipboard = LocalClipboardManager.current
++    var searching by remember { mutableStateOf(false) }
++    var findMsg by remember { mutableStateOf<String?>(null) }
++
++    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp)) {
++        Text("Настройки", style = MaterialTheme.typography.headlineSmall, color = cs.onSurface)
++        Spacer(Modifier.height(16.dp))
++        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
++            OutlinedTextField(
++                value = u,
++                onValueChange = { u = it },
++                label = { Text("Адрес ComfyUI (дома)") },
++                singleLine = true,
++                modifier = Modifier.fillMaxWidth()
++            )
++            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
++                TextButton(
++                    enabled = !searching,
++                    onClick = {
++                        searching = true
++                        findMsg = null
++                        scope.launch {
++                            val found = LanDiscovery.find(LanDiscovery.portOf(normalizeUrl(u)))
++                            searching = false
++                            if (found != null) {
++                                u = found
++                                findMsg = "Нашёл: $found"
++                            } else {
++                                findMsg = "Не нашёл. Проверь, что ComfyUI запущен с --listen 0.0.0.0, а VPN не режет локалку"
++                            }
++                        }
++                    }
++                ) { Text(if (searching) "Ищу…" else "Найти ПК в сети") }
++                TextButton(onClick = {
++                    clipboard.getText()?.text?.trim()?.takeIf { it.isNotEmpty() }?.let { u = it }
++                }) { Text("Вставить") }
++            }
++            findMsg?.let { Text(it, fontSize = 13.sp, color = cs.onSurfaceVariant) }
++            OutlinedTextField(
++                value = tun,
++                onValueChange = { tun = it },
++                label = { Text("Туннель (вне дома)") },
++                placeholder = { Text("https://….trycloudflare.com") },
++                supportingText = { Text("Используется, если ПК не нашёлся в локалке") },
++                singleLine = true,
++                trailingIcon = {
++                    TextButton(onClick = {
++                        clipboard.getText()?.text?.trim()?.takeIf { it.isNotEmpty() }?.let { tun = it }
++                    }) { Text("Вставить") }
++                },
++                modifier = Modifier.fillMaxWidth()
++            )
++            Row(verticalAlignment = Alignment.CenterVertically) {
++                Text("Фиксированный сид", color = cs.onSurface, modifier = Modifier.weight(1f))
++                Switch(checked = fixed, onCheckedChange = { fixed = it })
++            }
++            if (fixed) {
++                OutlinedTextField(
++                    value = seed,
++                    onValueChange = { v -> seed = v.filter { it.isDigit() }.take(18) },
++                    label = { Text("Сид") },
++                    singleLine = true,
++                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
++                    modifier = Modifier.fillMaxWidth()
++                )
++                TextButton(onClick = { seed = Random.nextLong(0L, 1L shl 50).toString() }) {
++                    Text("Случайный")
++                }
++            }
++        }
++        Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
++            TextButton(onClick = onDismiss) { Text("Отмена") }
++            TextButton(onClick = {
++                val s = if (fixed && seed.isBlank()) Random.nextLong(0L, 1L shl 50).toString() else seed
++                onSave(u, tun, fixed, s)
++            }) { Text("Сохранить") }
++        }
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/ImageViewer.kt b/app/src/main/java/com/lomkich/fxus/comfy/ImageViewer.kt
+new file mode 100644
+index 0000000..2f191b8
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/ImageViewer.kt
+@@ -0,0 +1,241 @@
++package com.lomkich.fxus.comfy
++
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.Job
++import androidx.compose.ui.util.lerp
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.animation.core.tween
++import androidx.compose.animation.core.FastOutSlowInEasing
++import androidx.compose.animation.core.Animatable
++import android.os.Build
++import android.widget.Toast
++import androidx.compose.animation.AnimatedVisibility
++import androidx.compose.animation.fadeIn
++import androidx.compose.animation.fadeOut
++import androidx.compose.foundation.Image
++import androidx.compose.foundation.background
++import androidx.compose.foundation.gestures.detectTapGestures
++import androidx.compose.foundation.gestures.detectTransformGestures
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.PaddingValues
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.heightIn
++import androidx.compose.foundation.layout.navigationBarsPadding
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.statusBarsPadding
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material.icons.Icons
++import androidx.compose.material.icons.filled.Close
++import androidx.compose.material3.ButtonDefaults
++import androidx.compose.material3.Icon
++import androidx.compose.material3.IconButton
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.SideEffect
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableFloatStateOf
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.geometry.Offset
++import androidx.compose.ui.graphics.Brush
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.asImageBitmap
++import androidx.compose.ui.graphics.graphicsLayer
++import androidx.compose.ui.input.pointer.pointerInput
++import androidx.compose.ui.layout.ContentScale
++import androidx.compose.ui.layout.onSizeChanged
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.unit.IntSize
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
++import androidx.compose.ui.window.Dialog
++import androidx.compose.ui.platform.LocalView
++import androidx.compose.ui.window.DialogProperties
++import androidx.compose.ui.window.DialogWindowProvider
++import androidx.core.view.WindowCompat
++
++private const val MAX_SCALE = 8f
++private const val DOUBLE_TAP_SCALE = 3f
++
++@Composable
++fun ImageViewer(turn: Turn, onDismiss: () -> Unit, onDelete: () -> Unit) {
++    val file = turn.file ?: return
++    val ctx = LocalContext.current
++    val bitmap = rememberFileBitmap(file, 4096)
++
++    fun toast(msg: String) = Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
++
++    Dialog(
++        onDismissRequest = onDismiss,
++        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
++    ) {
++        val dialogView = LocalView.current
++        SideEffect {
++            val w = (dialogView.parent as? DialogWindowProvider)?.window ?: return@SideEffect
++            val c = WindowCompat.getInsetsController(w, dialogView)
++            c.isAppearanceLightStatusBars = false
++            c.isAppearanceLightNavigationBars = false
++        }
++        var scale by remember { mutableFloatStateOf(1f) }
++        var offset by remember { mutableStateOf(Offset.Zero) }
++        var box by remember { mutableStateOf(IntSize.Zero) }
++        var chrome by remember { mutableStateOf(true) }
++        val scope = rememberCoroutineScope()
++        var zoomJob by remember { mutableStateOf<Job?>(null) }
++        val img = remember(bitmap) { bitmap?.asImageBitmap() }
++
++        fun clamp(o: Offset, s: Float): Offset {
++            val mx = box.width * (s - 1f) / 2f
++            val my = box.height * (s - 1f) / 2f
++            return Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(-my, my))
++        }
++
++        Box(
++            Modifier
++                .fillMaxSize()
++                .background(Color.Black)
++                .onSizeChanged { box = it }
++                .pointerInput(Unit) {
++                    detectTapGestures(
++                        onTap = { chrome = !chrome },
++                        onDoubleTap = { tap ->
++                            val s0 = scale
++                            val o0 = offset
++                            val s1: Float
++                            val o1: Offset
++                            if (s0 > 1f) {
++                                s1 = 1f
++                                o1 = Offset.Zero
++                            } else {
++                                val c = Offset(box.width / 2f, box.height / 2f)
++                                s1 = DOUBLE_TAP_SCALE
++                                o1 = clamp((c - tap) * (DOUBLE_TAP_SCALE - 1f), DOUBLE_TAP_SCALE)
++                            }
++                            // плавно ведём масштаб и сдвиг; на промежуточных кадрах сдвиг остаётся в границах,
++                            // потому что границы линейно зависят от масштаба
++                            zoomJob?.cancel()
++                            zoomJob = scope.launch {
++                                Animatable(0f).animateTo(1f, tween(300, easing = FastOutSlowInEasing)) {
++                                    scale = lerp(s0, s1, value)
++                                    offset = Offset(lerp(o0.x, o1.x, value), lerp(o0.y, o1.y, value))
++                                }
++                            }
++                        }
++                    )
++                }
++                .pointerInput(Unit) {
++                    detectTransformGestures { centroid, pan, zoom, _ ->
++                        zoomJob?.cancel()
++                        val newScale = (scale * zoom).coerceIn(1f, MAX_SCALE)
++                        val c = Offset(box.width / 2f, box.height / 2f)
++                        val rel = centroid - c
++                        // зум вокруг точки между пальцами + перетаскивание
++                        val moved = rel - (rel - offset) * (newScale / scale) + pan
++                        scale = newScale
++                        offset = clamp(moved, newScale)
++                    }
++                }
++        ) {
++            if (img != null) {
++                Image(
++                    bitmap = img,
++                    contentDescription = null,
++                    contentScale = ContentScale.Fit,
++                    modifier = Modifier
++                        .fillMaxSize()
++                        .graphicsLayer {
++                            scaleX = scale
++                            scaleY = scale
++                            translationX = offset.x
++                            translationY = offset.y
++                        }
++                )
++            }
++
++            AnimatedVisibility(
++                visible = chrome,
++                enter = fadeIn(),
++                exit = fadeOut(),
++                modifier = Modifier.fillMaxSize()
++            ) {
++                Box(Modifier.fillMaxSize()) {
++                    IconButton(
++                        onClick = onDismiss,
++                        modifier = Modifier
++                            .align(Alignment.TopStart)
++                            .statusBarsPadding()
++                            .padding(8.dp)
++                    ) {
++                        Icon(Icons.Filled.Close, contentDescription = "Закрыть", tint = Color.White)
++                    }
++
++                    Column(
++                        Modifier
++                            .align(Alignment.BottomCenter)
++                            .fillMaxWidth()
++                            .background(
++                                Brush.verticalGradient(
++                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
++                                )
++                            )
++                            .navigationBarsPadding()
++                            .padding(start = 16.dp, end = 16.dp, top = 32.dp, bottom = 8.dp)
++                    ) {
++                        Row(
++                            Modifier
++                                .fillMaxWidth()
++                                .padding(bottom = 4.dp),
++                            horizontalArrangement = Arrangement.SpaceBetween
++                        ) {
++                            ViewerAction("Сохранить", Color.White) {
++                                toast(
++                                    if (ImageActions.save(ctx, file)) "Сохранено в Pictures/ComfyChat"
++                                    else "Не удалось сохранить"
++                                )
++                            }
++                            ViewerAction("Копировать", Color.White) {
++                                if (ImageActions.copyImage(ctx, file)) {
++                                    // с Android 13 система сама показывает плашку
++                                    if (Build.VERSION.SDK_INT < 33) toast("Скопировано")
++                                } else toast("Не удалось скопировать")
++                            }
++                            ViewerAction("Поделиться", Color.White) {
++                                runCatching { ImageActions.share(ctx, file) }
++                                    .onFailure { toast("Не удалось поделиться") }
++                            }
++                            ViewerAction("Удалить", Color(0xFFFF8A80), onDelete)
++                        }
++                        Text(
++                            turn.prompt,
++                            color = Color.White.copy(alpha = 0.92f),
++                            fontSize = 14.sp,
++                            modifier = Modifier
++                                .heightIn(max = 140.dp)
++                                .verticalScroll(rememberScrollState())
++                        )
++                    }
++                }
++            }
++        }
++    }
++}
++
++@Composable
++private fun ViewerAction(label: String, color: Color, onClick: () -> Unit) {
++    TextButton(
++        onClick = onClick,
++        colors = ButtonDefaults.textButtonColors(contentColor = color),
++        contentPadding = PaddingValues(horizontal = 8.dp)
++    ) {
++        Text(label, fontSize = 13.sp)
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/Images.kt b/app/src/main/java/com/lomkich/fxus/comfy/Images.kt
+new file mode 100644
+index 0000000..8dba1cf
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/Images.kt
+@@ -0,0 +1,51 @@
++package com.lomkich.fxus.comfy
++
++import android.graphics.Bitmap
++import android.graphics.BitmapFactory
++import android.util.LruCache
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.produceState
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.withContext
++import java.io.File
++
++object Thumbs {
++    private val cache = object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 1024 / 6).toInt()) {
++        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
++    }
++
++    private fun key(f: File, side: Int) = "${f.name}@$side"
++
++    fun peek(f: File, side: Int): Bitmap? = cache.get(key(f, side))
++
++    /** Декодирует с уменьшением так, чтобы большая сторона была не меньше [side] (если картинка больше). */
++    fun load(f: File, side: Int): Bitmap? {
++        peek(f, side)?.let { return it }
++        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
++        BitmapFactory.decodeFile(f.path, bounds)
++        if (bounds.outWidth <= 0) return null
++        val big = maxOf(bounds.outWidth, bounds.outHeight)
++        var sample = 1
++        while (big / (sample * 2) >= side) sample *= 2
++        val bmp = BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = sample })
++            ?: return null
++        cache.put(key(f, side), bmp)
++        return bmp
++    }
++
++    fun evict(name: String) {
++        cache.snapshot().keys.filter { it.startsWith("$name@") }.forEach { cache.remove(it) }
++    }
++}
++
++@Composable
++fun rememberFileBitmap(file: File?, side: Int): Bitmap? {
++    val state = produceState<Bitmap?>(
++        initialValue = if (file != null) Thumbs.peek(file, side) else null,
++        file,
++        side
++    ) {
++        value = if (file == null) null else withContext(Dispatchers.IO) { Thumbs.load(file, side) }
++    }
++    return state.value
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/LanDiscovery.kt b/app/src/main/java/com/lomkich/fxus/comfy/LanDiscovery.kt
+new file mode 100644
+index 0000000..026a01d
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/LanDiscovery.kt
+@@ -0,0 +1,123 @@
++package com.lomkich.fxus.comfy
++
++import kotlinx.coroutines.CompletableDeferred
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.cancelChildren
++import kotlinx.coroutines.coroutineScope
++import kotlinx.coroutines.joinAll
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.sync.Semaphore
++import kotlinx.coroutines.sync.withPermit
++import kotlinx.coroutines.withContext
++import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
++import okhttp3.OkHttpClient
++import okhttp3.Request
++import java.io.IOException
++import java.net.Inet4Address
++import java.net.InetSocketAddress
++import java.net.NetworkInterface
++import java.net.Socket
++import java.util.concurrent.TimeUnit
++
++/**
++ * Поиск ComfyUI в локальной сети телефона: и когда телефон раздаёт хотспот (ПК сидит у него),
++ * и когда оба в одном Wi-Fi. Перебираем адреса подсетей своих интерфейсов, на открытом порту
++ * проверяем /system_stats, чтобы не принять за ComfyUI что-то постороннее.
++ */
++object LanDiscovery {
++    const val DEFAULT_PORT = 8188
++
++    // VPN, мобильная сеть и прочее, где искать бессмысленно
++    private val skipIface = Regex("^(lo|tun|wg|ppp|rmnet|ccmni|v4-|clat|dummy|ip6|sit|tap)")
++    private val privateHost = Regex("^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.)")
++
++    private val http = OkHttpClient.Builder()
++        .connectTimeout(1500, TimeUnit.MILLISECONDS)
++        .readTimeout(2000, TimeUnit.MILLISECONDS)
++        .callTimeout(3000, TimeUnit.MILLISECONDS)
++        .build()
++
++    /** Адрес вида http://192.168.x.x:порт, то есть имеет смысл искать заново при смене IP. */
++    fun isLanUrl(url: String): Boolean {
++        val u = url.toHttpUrlOrNull() ?: return false
++        return u.scheme == "http" && privateHost.containsMatchIn(u.host)
++    }
++
++    fun portOf(url: String): Int {
++        val u = url.toHttpUrlOrNull() ?: return DEFAULT_PORT
++        return if (u.scheme == "http" && u.port == 80) DEFAULT_PORT else u.port
++    }
++
++    /** Отвечает ли по этому адресу ComfyUI. */
++    suspend fun ping(baseUrl: String): Boolean = withContext(Dispatchers.IO) {
++        try {
++            http.newCall(Request.Builder().url("$baseUrl/system_stats").build()).execute().use { r ->
++                r.isSuccessful && r.body?.string().orEmpty().contains("\"devices\"")
++            }
++        } catch (e: Exception) {
++            false
++        }
++    }
++
++    private fun toLong(b: ByteArray): Long = b.fold(0L) { acc, x -> (acc shl 8) or (x.toLong() and 0xFF) }
++
++    private fun fmt(v: Long): String = "${(v shr 24) and 255}.${(v shr 16) and 255}.${(v shr 8) and 255}.${v and 255}"
++
++    /** Все адреса подсетей, где сидит сам телефон (кроме его собственных адресов). */
++    private fun candidates(): List<String> {
++        val out = LinkedHashSet<String>()
++        val ifaces = try {
++            NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
++        } catch (e: Exception) {
++            emptyList()
++        }
++        for (ni in ifaces) {
++            val up = try { ni.isUp && !ni.isLoopback } catch (e: Exception) { false }
++            if (!up || skipIface.containsMatchIn(ni.name)) continue
++            for (ia in ni.interfaceAddresses) {
++                val addr = ia.address as? Inet4Address ?: continue
++                if (!addr.isSiteLocalAddress) continue
++                val prefix = ia.networkPrefixLength.toInt().coerceIn(24, 30)
++                val own = toLong(addr.address)
++                val mask = (0xFFFFFFFFL shl (32 - prefix)) and 0xFFFFFFFFL
++                val net = own and mask
++                val size = 1L shl (32 - prefix)
++                for (h in (net + 1) until (net + size - 1)) {
++                    if (h != own) out.add(fmt(h))
++                }
++            }
++        }
++        return out.toList()
++    }
++
++    private suspend fun probe(host: String, port: Int): Boolean = withContext(Dispatchers.IO) {
++        try {
++            Socket().use { it.connect(InetSocketAddress(host, port), 400) }
++        } catch (e: IOException) {
++            return@withContext false
++        }
++        ping("http://$host:$port")
++    }
++
++    /** Возвращает http://ip:порт первого найденного ComfyUI или null. */
++    suspend fun find(port: Int = DEFAULT_PORT): String? = coroutineScope {
++        val hosts = candidates()
++        if (hosts.isEmpty()) return@coroutineScope null
++        val found = CompletableDeferred<String?>()
++        val sem = Semaphore(48)
++        val jobs = hosts.map { h ->
++            launch {
++                sem.withPermit {
++                    if (!found.isCompleted && probe(h, port)) found.complete("http://$h:$port")
++                }
++            }
++        }
++        launch {
++            jobs.joinAll()
++            found.complete(null)
++        }
++        val result = found.await()
++        coroutineContext.cancelChildren()
++        result
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/Models.kt b/app/src/main/java/com/lomkich/fxus/comfy/Models.kt
+new file mode 100644
+index 0000000..beee8a7
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/Models.kt
+@@ -0,0 +1,70 @@
++package com.lomkich.fxus.comfy
++
++import android.graphics.Bitmap
++import java.io.File
++
++data class Preset(val ratio: String, val size: Size)
++
++/** Размер кадра. Хранится как «ШxВ»; старые имена (WIDE и т. п.) тоже читаем. */
++data class Size(val w: Int, val h: Int) {
++    val key: String get() = "${w}x${h}"
++    val label: String get() = "$w×$h"
++
++    companion object {
++        const val MIN = 64
++        const val MAX = 4096
++        val DEFAULT = Size(2048, 1024)
++
++        val PRESETS = listOf(
++            Preset("1:1", Size(1024, 1024)),
++            Preset("2:1", Size(2048, 1024)),
++            Preset("2:3", Size(832, 1216)),
++            Preset("3:2", Size(1216, 832)),
++            Preset("3:4", Size(896, 1152)),
++            Preset("4:3", Size(1152, 896)),
++            Preset("9:16", Size(768, 1344)),
++            Preset("16:9", Size(1344, 768))
++        )
++
++        /** Латентное пространство кратно 8, поэтому округляем. */
++        fun snap(v: Int): Int = ((v + 4) / 8 * 8).coerceIn(MIN, MAX)
++
++        fun parse(s: String): Size? {
++            when (s) {
++                "WIDE" -> return Size(2048, 1024)
++                "SQUARE" -> return Size(1024, 1024)
++                "PORTRAIT" -> return Size(832, 1216)
++                "LANDSCAPE" -> return Size(1216, 832)
++            }
++            val parts = s.split('x')
++            if (parts.size != 2) return null
++            val w = parts[0].toIntOrNull() ?: return null
++            val h = parts[1].toIntOrNull() ?: return null
++            return if (w in MIN..MAX && h in MIN..MAX) Size(w, h) else null
++        }
++    }
++}
++
++data class ImageRef(val filename: String, val subfolder: String, val type: String)
++
++sealed interface GenEvent {
++    data class Stage(val text: String) : GenEvent
++    data class Progress(val value: Int, val max: Int) : GenEvent
++    class Preview(val bitmap: Bitmap) : GenEvent
++    data class Tags(val text: String) : GenEvent
++    data class Done(val images: List<ImageRef>) : GenEvent
++    data class Failed(val message: String) : GenEvent
++}
++
++data class Turn(
++    val id: Long,
++    val prompt: String,
++    val size: Size,
++    val stage: String = "Отправляю…",
++    val percent: Int? = null,
++    val preview: Bitmap? = null,
++    val tags: String? = null,
++    val file: File? = null,   // сохранённая картинка (история)
++    val error: String? = null,
++    val running: Boolean = true
++)
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/Popups.kt b/app/src/main/java/com/lomkich/fxus/comfy/Popups.kt
+new file mode 100644
+index 0000000..3783014
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/Popups.kt
+@@ -0,0 +1,375 @@
++package com.lomkich.fxus.comfy
++
++import androidx.activity.compose.BackHandler
++import androidx.compose.animation.animateContentSize
++import androidx.compose.animation.core.FastOutSlowInEasing
++import androidx.compose.animation.core.animateFloatAsState
++import androidx.compose.animation.core.spring
++import androidx.compose.animation.core.tween
++import androidx.compose.foundation.BorderStroke
++import androidx.compose.foundation.background
++import androidx.compose.foundation.border
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.gestures.detectTapGestures
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.WindowInsets
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.ime
++import androidx.compose.foundation.layout.navigationBars
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.statusBars
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.shape.CircleShape
++import androidx.compose.foundation.shape.CornerSize
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.foundation.text.KeyboardOptions
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.CircularProgressIndicator
++import androidx.compose.material3.LocalContentColor
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.OutlinedTextField
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.derivedStateOf
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.geometry.Rect
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.graphicsLayer
++import androidx.compose.ui.input.pointer.pointerInput
++import androidx.compose.ui.layout.Layout
++import androidx.compose.ui.layout.layout
++import androidx.compose.ui.platform.LocalDensity
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.input.KeyboardType
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.Constraints
++import androidx.compose.ui.unit.Dp
++import androidx.compose.ui.unit.IntOffset
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
++import androidx.compose.ui.util.lerp
++import kotlin.math.roundToInt
++
++/** Держит границы элемента-источника анимации, не вызывая перекомпозиций. */
++class RectHolder {
++    var r: Rect = Rect.Zero
++}
++
++enum class MorphPlacement {
++    /** Растёт от элемента до центра экрана (диалог). */
++    CENTER,
++
++    /** Растёт вверх от элемента, ширина равна ширине элемента (выпадающий список). */
++    ABOVE
++}
++
++/**
++ * Окно, которое «вырастает» из элемента: стартует с его границ и формы, плавно меняет размер,
++ * позицию и скругление. Содержимое всегда лежит в целевом размере и просто открывается вместе
++ * с рамкой. anchor == null: закрыто (идёт обратная анимация и окно пропадает).
++ */
++@Composable
++fun MorphPopup(
++    anchor: Rect?,
++    placement: MorphPlacement,
++    color: Color,
++    startRadius: Dp,
++    endRadius: Dp,
++    scrimAlpha: Float,
++    onDismiss: () -> Unit,
++    maxWidth: Dp = 420.dp,
++    content: @Composable () -> Unit
++) {
++    val open = anchor != null
++    val held = remember { arrayOfNulls<Rect>(1) }
++    if (anchor != null) held[0] = anchor
++    val p = animateFloatAsState(
++        targetValue = if (open) 1f else 0f,
++        animationSpec = if (open) spring(dampingRatio = 0.85f, stiffness = 380f) else tween(200, easing = FastOutSlowInEasing),
++        label = "morph"
++    )
++    val visible by remember(open) { derivedStateOf { open || p.value > 0.001f } }
++
++    BackHandler(enabled = open, onBack = onDismiss)
++
++    val rect = held[0]
++    if (rect != null && visible) {
++        val density = LocalDensity.current
++        val topInset = WindowInsets.statusBars.getTop(density)
++        val bottomInset = maxOf(WindowInsets.ime.getBottom(density), WindowInsets.navigationBars.getBottom(density))
++        val startR = with(density) { startRadius.toPx() }
++        val endR = with(density) { endRadius.toPx() }
++        val shadowPx = with(density) { 12.dp.toPx() }
++        val maxWPx = with(density) { maxWidth.roundToPx() }
++        val marginPx = with(density) { 16.dp.roundToPx() }
++        val anchorW = rect.width.roundToInt()
++        val anchorH = rect.height.roundToInt()
++        val matchWidth = placement == MorphPlacement.ABOVE
++
++        Box(Modifier.fillMaxSize()) {
++            Box(
++                Modifier
++                    .fillMaxSize()
++                    .graphicsLayer { alpha = p.value.coerceIn(0f, 1f) }
++                    .background(Color.Black.copy(alpha = scrimAlpha))
++                    .pointerInput(open) { if (open) detectTapGestures { onDismiss() } }
++            )
++            Layout(
++                modifier = Modifier.fillMaxSize(),
++                content = {
++                    Box(
++                        Modifier
++                            .graphicsLayer {
++                                val f = p.value.coerceIn(0f, 1f)
++                                shape = RoundedCornerShape(CornerSize(lerp(startR, endR, f)))
++                                clip = true
++                                shadowElevation = shadowPx * f
++                            }
++                            .background(color)
++                            .layout { measurable, constraints ->
++                                val f = p.value
++                                val tw = if (matchWidth) anchorW else minOf(constraints.maxWidth - 2 * marginPx, maxWPx)
++                                val maxH = when (placement) {
++                                    MorphPlacement.CENTER -> constraints.maxHeight - topInset - bottomInset - 2 * marginPx
++                                    MorphPlacement.ABOVE -> minOf((rect.bottom - topInset - marginPx).toInt(), constraints.maxHeight / 2)
++                                }.coerceAtLeast(0)
++                                val pl = measurable.measure(Constraints(minWidth = tw, maxWidth = tw, minHeight = 0, maxHeight = maxH))
++                                val w = lerp(anchorW, tw, f).coerceAtLeast(0)
++                                val h = lerp(anchorH, pl.height, f).coerceAtLeast(0)
++                                layout(w, h) { pl.place(0, 0) }
++                            }
++                            .pointerInput(Unit) { detectTapGestures { } }
++                    ) {
++                        Box(Modifier.graphicsLayer { alpha = ((p.value - 0.2f) / 0.6f).coerceIn(0f, 1f) }) {
++                            content()
++                        }
++                    }
++                }
++            ) { measurables, constraints ->
++                val w = constraints.maxWidth
++                val h = constraints.maxHeight
++                val card = measurables[0].measure(Constraints(maxWidth = w, maxHeight = h))
++                layout(w, h) {
++                    val f = p.value
++                    val pos = when (placement) {
++                        MorphPlacement.CENTER -> {
++                            val cx = lerp(rect.center.x, w / 2f, f)
++                            val cy = lerp(rect.center.y, (topInset + (h - bottomInset)) / 2f, f)
++                            IntOffset((cx - card.width / 2f).roundToInt(), (cy - card.height / 2f).roundToInt())
++                        }
++                        MorphPlacement.ABOVE -> IntOffset(rect.left.roundToInt(), (rect.bottom - card.height).roundToInt())
++                    }
++                    card.place(pos)
++                }
++            }
++        }
++    }
++}
++
++/** Мини-прямоугольник с пропорциями кадра. */
++@Composable
++fun RatioIcon(w: Int, h: Int, color: Color = LocalContentColor.current, box: Dp = 18.dp) {
++    val kw = if (w >= h) 1f else w.toFloat() / h
++    val kh = if (w >= h) h.toFloat() / w else 1f
++    Box(Modifier.size(box), contentAlignment = Alignment.Center) {
++        Box(
++            Modifier
++                .size(width = box * kw, height = box * kh)
++                .border(1.5.dp, color, RoundedCornerShape(2.dp))
++        )
++    }
++}
++
++@Composable
++private fun SizeTile(size: Size, ratio: String?, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
++    val cs = MaterialTheme.colorScheme
++    val tint = if (selected) cs.primary else cs.onSurfaceVariant
++    Surface(
++        onClick = onClick,
++        modifier = modifier,
++        shape = RoundedCornerShape(14.dp),
++        color = if (selected) cs.primary.copy(alpha = 0.14f) else Color.Transparent,
++        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) cs.primary else cs.outline)
++    ) {
++        Row(
++            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
++            verticalAlignment = Alignment.CenterVertically,
++            horizontalArrangement = Arrangement.spacedBy(10.dp)
++        ) {
++            RatioIcon(size.w, size.h, tint)
++            Column {
++                Text("${size.w}×${size.h}", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = cs.onSurface)
++                if (ratio != null) Text(ratio, fontSize = 12.sp, color = cs.onSurfaceVariant)
++            }
++        }
++    }
++}
++
++@Composable
++private fun TileGrid(items: List<Pair<Size, String?>>, current: Size, onPick: (Size) -> Unit) {
++    items.chunked(2).forEach { row ->
++        Row(
++            Modifier.fillMaxWidth().padding(bottom = 8.dp),
++            horizontalArrangement = Arrangement.spacedBy(8.dp)
++        ) {
++            row.forEach { (s, ratio) ->
++                SizeTile(s, ratio, s == current, Modifier.weight(1f)) { onPick(s) }
++            }
++            if (row.size == 1) Spacer(Modifier.weight(1f))
++        }
++    }
++}
++
++/** Содержимое окна разрешения: готовые варианты, недавние свои и ввод своего. */
++@Composable
++fun SizePickerContent(
++    current: Size,
++    recent: List<Size>,
++    onPick: (Size) -> Unit,
++    onCancel: () -> Unit
++) {
++    val cs = MaterialTheme.colorScheme
++    var wText by remember { mutableStateOf(current.w.toString()) }
++    var hText by remember { mutableStateOf(current.h.toString()) }
++    val w = wText.toIntOrNull()
++    val h = hText.toIntOrNull()
++    val custom = if (w != null && h != null && w in Size.MIN..Size.MAX && h in Size.MIN..Size.MAX) {
++        Size(Size.snap(w), Size.snap(h))
++    } else null
++    val typed = wText.isNotEmpty() && hText.isNotEmpty()
++
++    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp)) {
++        Text("Разрешение", style = MaterialTheme.typography.headlineSmall, color = cs.onSurface)
++        Spacer(Modifier.height(16.dp))
++
++        TileGrid(Size.PRESETS.map { it.size to it.ratio }, current, onPick)
++
++        val extra = recent.filter { r -> Size.PRESETS.none { it.size == r } }
++        if (extra.isNotEmpty()) {
++            Text(
++                "Свои",
++                fontSize = 14.sp,
++                color = cs.onSurfaceVariant,
++                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
++            )
++            TileGrid(extra.map { it to null }, current, onPick)
++        }
++
++        Text(
++            "Своё разрешение",
++            fontSize = 14.sp,
++            color = cs.onSurfaceVariant,
++            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
++        )
++        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++            OutlinedTextField(
++                value = wText,
++                onValueChange = { wText = it.filter(Char::isDigit).take(4) },
++                label = { Text("Ширина") },
++                singleLine = true,
++                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
++                modifier = Modifier.weight(1f)
++            )
++            Text("×", color = cs.onSurfaceVariant)
++            OutlinedTextField(
++                value = hText,
++                onValueChange = { hText = it.filter(Char::isDigit).take(4) },
++                label = { Text("Высота") },
++                singleLine = true,
++                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
++                modifier = Modifier.weight(1f)
++            )
++        }
++        val rounded = custom != null && (custom.w != w || custom.h != h)
++        Text(
++            when {
++                custom == null && typed -> "От ${Size.MIN} до ${Size.MAX} по каждой стороне"
++                rounded -> "Округлю до кратного 8: ${custom!!.w}×${custom.h}"
++                else -> "От ${Size.MIN} до ${Size.MAX}, кратно 8"
++            },
++            fontSize = 12.sp,
++            color = if (custom == null && typed) cs.error else cs.onSurfaceVariant,
++            modifier = Modifier.padding(top = 6.dp, start = 4.dp)
++        )
++
++        Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
++            TextButton(onClick = onCancel) { Text("Отмена") }
++            TextButton(enabled = custom != null, onClick = { custom?.let(onPick) }) { Text("Применить") }
++        }
++    }
++}
++
++/** Имя модели без расширения, чтобы влезало в кнопку и список. */
++fun modelTitle(name: String): String = name.removeSuffix(".safetensors").removeSuffix(".ckpt")
++
++/** Содержимое выпадающего списка чекпоинтов. */
++@Composable
++fun CheckpointListContent(
++    models: List<String>?,
++    scanning: Boolean,
++    error: String?,
++    selected: String,
++    onPick: (String) -> Unit
++) {
++    val cs = MaterialTheme.colorScheme
++    Column(
++        Modifier
++            .fillMaxWidth()
++            .animateContentSize()
++            .verticalScroll(rememberScrollState())
++            .padding(vertical = 6.dp)
++    ) {
++        when {
++            scanning -> Row(
++                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
++                verticalAlignment = Alignment.CenterVertically,
++                horizontalArrangement = Arrangement.spacedBy(10.dp)
++            ) {
++                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
++                Text("Сканирую…", fontSize = 14.sp, color = cs.onSurfaceVariant)
++            }
++            error != null -> Text(
++                error,
++                fontSize = 14.sp,
++                color = cs.error,
++                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
++            )
++            else -> models.orEmpty().forEach { name ->
++                val sel = name == selected
++                Row(
++                    Modifier
++                        .fillMaxWidth()
++                        .clickable { onPick(name) }
++                        .padding(horizontal = 12.dp, vertical = 10.dp),
++                    verticalAlignment = Alignment.CenterVertically,
++                    horizontalArrangement = Arrangement.spacedBy(8.dp)
++                ) {
++                    Text(
++                        modelTitle(name),
++                        fontSize = 14.sp,
++                        fontWeight = if (sel) FontWeight.Medium else FontWeight.Normal,
++                        color = if (sel) cs.primary else cs.onSurface,
++                        maxLines = 2,
++                        overflow = TextOverflow.Ellipsis,
++                        modifier = Modifier.weight(1f)
++                    )
++                    if (sel) Box(Modifier.size(6.dp).background(cs.primary, CircleShape))
++                }
++            }
++        }
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/SettingsStore.kt b/app/src/main/java/com/lomkich/fxus/comfy/SettingsStore.kt
+new file mode 100644
+index 0000000..38ec6e2
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/SettingsStore.kt
+@@ -0,0 +1,103 @@
++package com.lomkich.fxus.comfy
++
++import android.content.Context
++import androidx.datastore.preferences.core.booleanPreferencesKey
++import androidx.datastore.preferences.core.edit
++import androidx.datastore.preferences.core.stringPreferencesKey
++import androidx.datastore.preferences.core.stringSetPreferencesKey
++import androidx.datastore.preferences.preferencesDataStore
++import kotlinx.coroutines.flow.Flow
++import kotlinx.coroutines.flow.map
++
++private val Context.dataStore by preferencesDataStore("settings")
++
++/**
++ * Приводит введённый адрес к виду схема://хост[:порт]: добавляет схему (https для trycloudflare,
++ * иначе http), порт 8188 для голого IP и выкидывает путь, если вставили ссылку целиком.
++ */
++fun normalizeUrl(raw: String): String {
++    var s = raw.trim()
++    if (s.isEmpty()) return s
++    if (!s.contains("://")) {
++        s = (if (s.substringBefore('/').endsWith(".trycloudflare.com")) "https://" else "http://") + s
++    }
++    val scheme = s.substringBefore("://").lowercase()
++    val host = s.substringAfter("://").substringBefore('/').substringBefore('?').trim()
++    if (host.isEmpty()) return s.trimEnd('/')
++    val withPort = if (scheme == "http" && !host.contains(':')) "$host:8188" else host
++    return "$scheme://$withPort"
++}
++
++class SettingsStore(private val ctx: Context) {
++    private val urlKey = stringPreferencesKey("url")
++    private val seedFixedKey = booleanPreferencesKey("seed_fixed")
++    private val seedKey = stringPreferencesKey("seed")
++    private val tunnelKey = stringPreferencesKey("tunnel")
++    private val ckptKey = stringPreferencesKey("ckpt")
++    private val sizeKey = stringPreferencesKey("size")
++    private val sizesKey = stringPreferencesKey("recent_sizes")
++    private val workflowKey = stringPreferencesKey("workflow")
++    private val hiddenKey = stringSetPreferencesKey("hidden_workflows")
++
++    val url: Flow<String> = ctx.dataStore.data.map { it[urlKey] ?: "http://192.168.0.10:8188" }
++
++    /** Адрес для доступа из интернета (Cloudflare Tunnel и т. п.); пусто = не используется. */
++    val tunnel: Flow<String> = ctx.dataStore.data.map { it[tunnelKey] ?: "" }
++
++    /** Пустая строка: оставить модель, прописанную в workflow.json. */
++    val ckpt: Flow<String> = ctx.dataStore.data.map { it[ckptKey] ?: "" }
++
++    val size: Flow<Size> = ctx.dataStore.data.map { Size.parse(it[sizeKey] ?: "") ?: Size.DEFAULT }
++
++    /** Недавно введённые свои разрешения (до 4, свежие первыми). */
++    val recentSizes: Flow<List<Size>> = ctx.dataStore.data.map { p ->
++        (p[sizesKey] ?: "").split(';').mapNotNull { Size.parse(it) }
++    }
++
++    /** Активный воркфлоу: builtin, pc:<имя> или local:<имя>. */
++    /** id скрытых воркфлоу (скрытые не показываются в списке, но их можно вернуть). */
++    val hiddenWorkflows: Flow<Set<String>> = ctx.dataStore.data.map { it[hiddenKey] ?: emptySet() }
++
++    val workflow: Flow<String> = ctx.dataStore.data.map { it[workflowKey] ?: WorkflowStore.BUILTIN }
++
++    val seedFixed: Flow<Boolean> = ctx.dataStore.data.map { it[seedFixedKey] ?: false }
++    val seed: Flow<String> = ctx.dataStore.data.map { it[seedKey] ?: "" }
++
++    suspend fun setUrl(v: String) {
++        ctx.dataStore.edit { it[urlKey] = normalizeUrl(v) }
++    }
++
++    suspend fun setHiddenWorkflows(v: Set<String>) {
++        ctx.dataStore.edit { it[hiddenKey] = v }
++    }
++
++    suspend fun setWorkflow(v: String) {
++        ctx.dataStore.edit { it[workflowKey] = v }
++    }
++
++    suspend fun setSize(v: Size) {
++        ctx.dataStore.edit { it[sizeKey] = v.key }
++    }
++
++    suspend fun rememberCustomSize(v: Size) {
++        ctx.dataStore.edit { p ->
++            val cur = (p[sizesKey] ?: "").split(';').mapNotNull { Size.parse(it) }
++            p[sizesKey] = (listOf(v) + cur.filter { it != v }).take(4).joinToString(";") { it.key }
++        }
++    }
++
++    suspend fun setTunnel(v: String) {
++        ctx.dataStore.edit { it[tunnelKey] = normalizeUrl(v) }
++    }
++
++    suspend fun setCkpt(v: String) {
++        ctx.dataStore.edit { it[ckptKey] = v }
++    }
++
++    suspend fun setSeed(fixed: Boolean, value: String) {
++        ctx.dataStore.edit {
++            it[seedFixedKey] = fixed
++            it[seedKey] = value
++        }
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/WorkflowPicker.kt b/app/src/main/java/com/lomkich/fxus/comfy/WorkflowPicker.kt
+new file mode 100644
+index 0000000..1a1334a
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/WorkflowPicker.kt
+@@ -0,0 +1,200 @@
++package com.lomkich.fxus.comfy
++
++import androidx.compose.animation.animateContentSize
++import androidx.compose.foundation.background
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.shape.CircleShape
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.CircularProgressIndicator
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.alpha
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
++
++/**
++ * Окно выбора воркфлоу: встроенный, с ПК (сверка по хэшу), импортированные с телефона.
++ * «⋯» у строки открывает «Скрыть» / «Удалить»; скрытые лежат в сворачиваемом разделе внизу.
++ */
++@Composable
++fun WorkflowPickerContent(
++    items: List<WorkflowItem>,
++    hiddenItems: List<WorkflowItem>,
++    selectedId: String,
++    busy: Boolean,
++    status: String?,
++    onPick: (WorkflowItem) -> Unit,
++    onRefresh: () -> Unit,
++    onImport: () -> Unit,
++    onHide: (WorkflowItem) -> Unit,
++    onUnhide: (WorkflowItem) -> Unit,
++    onDelete: (WorkflowItem) -> Unit,
++    onClose: () -> Unit
++) {
++    val cs = MaterialTheme.colorScheme
++    var expandedId by remember { mutableStateOf<String?>(null) }
++    var confirmId by remember { mutableStateOf<String?>(null) }
++    var showHidden by remember { mutableStateOf(false) }
++
++    Column(
++        Modifier
++            .fillMaxWidth()
++            .animateContentSize()
++            .verticalScroll(rememberScrollState())
++            .padding(24.dp)
++    ) {
++        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
++            Text("Воркфлоу", style = MaterialTheme.typography.headlineSmall, color = cs.onSurface)
++            if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
++        }
++        if (status != null) {
++            Text(
++                status,
++                fontSize = 13.sp,
++                color = cs.onSurfaceVariant,
++                modifier = Modifier.padding(top = 6.dp)
++            )
++        }
++        Spacer(Modifier.height(12.dp))
++
++        items.forEach { item ->
++            val sel = item.id == selectedId
++            Row(
++                Modifier
++                    .fillMaxWidth()
++                    .alpha(if (item.enabled) 1f else 0.5f)
++                    .clickable(enabled = item.enabled && !busy) { onPick(item) }
++                    .padding(vertical = 10.dp),
++                verticalAlignment = Alignment.CenterVertically,
++                horizontalArrangement = Arrangement.spacedBy(8.dp)
++            ) {
++                Column(Modifier.weight(1f)) {
++                    Text(
++                        item.title,
++                        fontSize = 15.sp,
++                        fontWeight = if (sel) FontWeight.Medium else FontWeight.Normal,
++                        color = if (sel) cs.primary else cs.onSurface,
++                        maxLines = 2,
++                        overflow = TextOverflow.Ellipsis
++                    )
++                    Text(item.note, fontSize = 12.sp, color = cs.onSurfaceVariant)
++                }
++                if (sel) Box(Modifier.size(6.dp).background(cs.primary, CircleShape))
++                if (item.canHide || item.canDelete) {
++                    Text(
++                        "⋯",
++                        fontSize = 20.sp,
++                        color = cs.onSurfaceVariant,
++                        modifier = Modifier
++                            .clickable {
++                                expandedId = if (expandedId == item.id) null else item.id
++                                confirmId = null
++                            }
++                            .padding(horizontal = 10.dp, vertical = 2.dp)
++                    )
++                }
++            }
++            if (expandedId == item.id) {
++                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
++                    if (item.canHide) {
++                        TextButton(enabled = !busy, onClick = { expandedId = null; onHide(item) }) { Text("Скрыть") }
++                    }
++                    if (item.canDelete) {
++                        val sure = confirmId == item.id
++                        TextButton(enabled = !busy, onClick = {
++                            if (sure) {
++                                confirmId = null
++                                expandedId = null
++                                onDelete(item)
++                            } else {
++                                confirmId = item.id
++                            }
++                        }) {
++                            Text(if (sure) "Точно удалить?" else "Удалить", color = if (sure) cs.error else Color.Unspecified)
++                        }
++                    }
++                }
++            }
++        }
++
++        if (hiddenItems.isNotEmpty()) {
++            Row(
++                Modifier
++                    .fillMaxWidth()
++                    .clickable { showHidden = !showHidden }
++                    .padding(top = 14.dp, bottom = 6.dp),
++                verticalAlignment = Alignment.CenterVertically
++            ) {
++                Text(
++                    "Скрытые (${hiddenItems.size})",
++                    fontSize = 13.sp,
++                    color = cs.onSurfaceVariant,
++                    modifier = Modifier.weight(1f)
++                )
++                Text(if (showHidden) "▾" else "▸", color = cs.onSurfaceVariant)
++            }
++            if (showHidden) {
++                hiddenItems.forEach { item ->
++                    Row(
++                        Modifier
++                            .fillMaxWidth()
++                            .padding(vertical = 4.dp),
++                        verticalAlignment = Alignment.CenterVertically
++                    ) {
++                        Column(Modifier.weight(1f)) {
++                            Text(
++                                item.title,
++                                fontSize = 14.sp,
++                                color = cs.onSurfaceVariant,
++                                maxLines = 2,
++                                overflow = TextOverflow.Ellipsis
++                            )
++                            Text(item.note, fontSize = 12.sp, color = cs.onSurfaceVariant.copy(alpha = 0.7f))
++                        }
++                        TextButton(enabled = !busy, onClick = { onUnhide(item) }) { Text("Вернуть") }
++                        if (item.canDelete) {
++                            val sure = confirmId == item.id
++                            TextButton(enabled = !busy, onClick = {
++                                if (sure) {
++                                    confirmId = null
++                                    onDelete(item)
++                                } else {
++                                    confirmId = item.id
++                                }
++                            }) {
++                                Text(if (sure) "Точно?" else "Удалить", color = if (sure) cs.error else Color.Unspecified)
++                            }
++                        }
++                    }
++                }
++            }
++        }
++
++        Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.End) {
++            TextButton(enabled = !busy, onClick = onRefresh) { Text("С ПК") }
++            TextButton(enabled = !busy, onClick = onImport) { Text("Импорт") }
++            TextButton(onClick = onClose) { Text("Закрыть") }
++        }
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/WorkflowSpec.kt b/app/src/main/java/com/lomkich/fxus/comfy/WorkflowSpec.kt
+new file mode 100644
+index 0000000..c7b4fa5
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/WorkflowSpec.kt
+@@ -0,0 +1,159 @@
++package com.lomkich.fxus.comfy
++
++import kotlinx.serialization.json.Json
++import kotlinx.serialization.json.JsonArray
++import kotlinx.serialization.json.JsonElement
++import kotlinx.serialization.json.JsonObject
++import kotlinx.serialization.json.JsonPrimitive
++import kotlinx.serialization.json.contentOrNull
++import kotlinx.serialization.json.intOrNull
++import kotlinx.serialization.json.jsonObject
++import kotlinx.serialization.json.jsonPrimitive
++
++/** Понятная пользователю ошибка разбора воркфлоу. */
++class WorkflowError(message: String) : Exception(message)
++
++/** Конкретное поле конкретной ноды (куда подставлять значение). */
++data class NodeInput(val node: String, val input: String)
++
++/**
++ * Где в воркфлоу что лежит. Раньше ID нод были зашиты константами, теперь определяются
++ * по самому JSON, поэтому подойдёт любой API-экспорт.
++ *
++ * Обязательны: prompt (куда писать текст), sampler, output.
++ * Остальное необязательно: нет ноды, значит, соответствующая функция просто отключена.
++ */
++class WorkflowSpec(
++    val prompt: NodeInput,
++    val sampler: String,
++    val seed: NodeInput?,
++    val outputs: Set<String>,
++    val translator: String?,
++    val tagsPreview: String?,
++    val checkpoint: String?,
++    val latent: String?,
++    val decode: String?
++) {
++    companion object {
++        private val TEXT_NAMES = listOf("text", "value", "string", "prompt", "text_g")
++        private val OUTPUT_CLASSES = setOf("PreviewImage", "SaveImage")
++        private const val MARKER = "APP_INPUT"
++
++        private fun JsonObject.cls(id: String): String? =
++            (this[id] as? JsonObject)?.get("class_type")?.let { (it as? JsonPrimitive)?.contentOrNull }
++
++        private fun JsonObject.inputsOf(id: String): JsonObject? =
++            (this[id] as? JsonObject)?.get("inputs") as? JsonObject
++
++        private fun JsonObject.title(id: String): String? =
++            ((this[id] as? JsonObject)?.get("_meta") as? JsonObject)?.get("title")
++                ?.let { (it as? JsonPrimitive)?.contentOrNull }
++
++        /** Ссылка на выход другой ноды в API-формате: ["id", слот]. */
++        private fun link(el: JsonElement?): Pair<String, Int>? {
++            val a = el as? JsonArray ?: return null
++            if (a.size != 2) return null
++            val id = (a[0] as? JsonPrimitive)?.contentOrNull ?: return null
++            val slot = (a[1] as? JsonPrimitive)?.intOrNull ?: return null
++            return id to slot
++        }
++
++        private fun isStringLiteral(el: JsonElement?): Boolean = el is JsonPrimitive && el.isString
++
++        /** Поле либо литерал (берём его), либо ссылка на ноду-источник с литералом (берём её). */
++        private fun resolveLiteral(wf: JsonObject, node: String, input: String): NodeInput? {
++            val v = wf.inputsOf(node)?.get(input) ?: return null
++            val l = link(v) ?: return NodeInput(node, input)
++            val src = wf.inputsOf(l.first) ?: return null
++            val key = listOf("value", "seed", "int").firstOrNull { src[it] is JsonPrimitive } ?: return null
++            return NodeInput(l.first, key)
++        }
++
++        private fun textInput(wf: JsonObject, id: String): NodeInput? {
++            val inputs = wf.inputsOf(id) ?: return null
++            val name = TEXT_NAMES.firstOrNull { isStringLiteral(inputs[it]) } ?: return null
++            return NodeInput(id, name)
++        }
++
++        /**
++         * Идём от positive у сэмплера вверх по ссылкам. Входом считаем самую «верхнюю» ноду
++         * с текстовым литералом: в простом графе это сам CLIPTextEncode, в твоём
++         * это PrimitiveStringMultiline перед переводчиком.
++         */
++        private fun findPrompt(wf: JsonObject, start: String): NodeInput? {
++            var best: NodeInput? = null
++            val seen = HashSet<String>().apply { add(start) }
++            val queue = ArrayDeque<String>().apply { add(start) }
++            while (queue.isNotEmpty()) {
++                val id = queue.removeFirst()
++                textInput(wf, id)?.let { best = it }
++                val inputs = wf.inputsOf(id) ?: continue
++                for (v in inputs.values) {
++                    val t = link(v)?.first ?: continue
++                    if (seen.add(t)) queue.add(t)
++                }
++            }
++            return best
++        }
++
++        fun parse(bytes: ByteArray): Pair<JsonObject, WorkflowSpec> {
++            val root = try {
++                Json.parseToJsonElement(bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")).jsonObject
++            } catch (e: Exception) {
++                throw WorkflowError("Файл не похож на JSON-воркфлоу")
++            }
++            return root to detect(root)
++        }
++
++        fun detect(wf: JsonObject): WorkflowSpec {
++            if (wf.containsKey("nodes") || wf.containsKey("links")) {
++                throw WorkflowError("Это обычный (UI) экспорт. Нужен Workflow → Export (API)")
++            }
++            if (wf.isEmpty() || wf.keys.any { wf.cls(it) == null }) {
++                throw WorkflowError("Не API-формат: у нод нет class_type")
++            }
++            val ids = wf.keys.sortedBy { it.toIntOrNull() ?: Int.MAX_VALUE }
++
++            val sampler = ids.firstOrNull {
++                val c = wf.cls(it).orEmpty()
++                c.startsWith("KSampler") || c.startsWith("SamplerCustom")
++            } ?: throw WorkflowError("В воркфлоу нет KSampler: нечего показывать в превью")
++
++            val sInputs = wf.inputsOf(sampler)
++            val seedName = listOf("seed", "noise_seed").firstOrNull { sInputs?.containsKey(it) == true }
++            val seed = seedName?.let { resolveLiteral(wf, sampler, it) }
++                ?: ids.firstOrNull { wf.cls(it) == "RandomNoise" }?.let { resolveLiteral(wf, it, "noise_seed") }
++
++            // 1) явная метка в названии ноды, 2) автопоиск от positive
++            val marked = ids.firstOrNull { wf.title(it)?.contains(MARKER, ignoreCase = true) == true }
++            val prompt = marked?.let { m ->
++                textInput(wf, m) ?: wf.inputsOf(m)?.entries
++                    ?.firstOrNull { isStringLiteral(it.value) }?.let { NodeInput(m, it.key) }
++            } ?: link(sInputs?.get("positive"))?.first?.let { findPrompt(wf, it) }
++            ?: throw WorkflowError(
++                "Не нашёл, куда подставлять текст. Назови нужную ноду с «$MARKER» в заголовке"
++            )
++
++            val decode = ids.firstOrNull { wf.cls(it).orEmpty().startsWith("VAEDecode") }
++            // все выходные ноды: при ветвлении (Branch) отработает только одна из них
++            val outputs = ids.filter { wf.cls(it) in OUTPUT_CLASSES }.toSet()
++            if (outputs.isEmpty()) throw WorkflowError("В воркфлоу нет PreviewImage или SaveImage")
++
++            val translator = ids.firstOrNull { wf.cls(it) == "RuDanbooruTags" }
++            val tagsPreview = translator?.let { t ->
++                ids.firstOrNull { id ->
++                    wf.cls(id) == "PreviewAny" && link(wf.inputsOf(id)?.get("source")) == (t to 0)
++                }
++            }
++
++            val checkpoint = ids.firstOrNull { isStringLiteral(wf.inputsOf(it)?.get("ckpt_name")) }
++            val latent = ids.firstOrNull { id ->
++                wf.cls(id).orEmpty().contains("Latent") &&
++                    wf.inputsOf(id)?.get("width") is JsonPrimitive &&
++                    wf.inputsOf(id)?.get("height") is JsonPrimitive
++            }
++
++            return WorkflowSpec(prompt, sampler, seed, outputs, translator, tagsPreview, checkpoint, latent, decode)
++        }
++    }
++}
+diff --git a/app/src/main/java/com/lomkich/fxus/comfy/WorkflowStore.kt b/app/src/main/java/com/lomkich/fxus/comfy/WorkflowStore.kt
+new file mode 100644
+index 0000000..c9f0fea
+--- /dev/null
++++ b/app/src/main/java/com/lomkich/fxus/comfy/WorkflowStore.kt
+@@ -0,0 +1,68 @@
++package com.lomkich.fxus.comfy
++
++import android.content.Context
++import java.io.File
++import java.security.MessageDigest
++
++/**
++ * Файлы воркфлоу на телефоне.
++ *  builtin       — assets/workflow.json (запасной, есть всегда);
++ *  pc:<имя>      — скачано с ПК через app_bridge (кэш, работает и без связи);
++ *  local:<имя>   — импортировано с телефона.
++ */
++class WorkflowStore(private val ctx: Context) {
++    private val pcDir = File(ctx.filesDir, "workflows/pc").apply { mkdirs() }
++    private val localDir = File(ctx.filesDir, "workflows/local").apply { mkdirs() }
++
++    private fun dirOf(id: String): File? = when {
++        id.startsWith("pc:") -> pcDir
++        id.startsWith("local:") -> localDir
++        else -> null
++    }
++
++    /** Только имя файла и только .json: никаких путей. */
++    private fun safeName(id: String): String? {
++        val n = id.substringAfter(':', "")
++        return n.takeIf { it.isNotEmpty() && File(it).name == n && n.endsWith(".json", ignoreCase = true) }
++    }
++
++    fun read(id: String): ByteArray? {
++        if (id == BUILTIN) return ctx.assets.open("workflow.json").use { it.readBytes() }
++        val dir = dirOf(id) ?: return null
++        val f = File(dir, safeName(id) ?: return null)
++        return if (f.isFile) f.readBytes() else null
++    }
++
++    fun write(id: String, bytes: ByteArray) {
++        val dir = dirOf(id) ?: return
++        File(dir, safeName(id) ?: return).writeBytes(bytes)
++    }
++
++    fun exists(id: String): Boolean {
++        val dir = dirOf(id) ?: return false
++        return File(dir, safeName(id) ?: return false).isFile
++    }
++
++    /** Удаляет только файл на телефоне (builtin не трогается). */
++    fun delete(id: String) {
++        val dir = dirOf(id) ?: return
++        File(dir, safeName(id) ?: return).delete()
++    }
++
++    fun names(prefix: String): List<String> =
++        (if (prefix == "pc") pcDir else localDir).listFiles { f -> f.isFile && f.name.endsWith(".json", true) }
++            ?.map { it.name }?.sortedBy { it.lowercase() }.orEmpty()
++
++    /** Тот же хэш, что считает сервер: первые 16 символов sha256 от байтов файла. */
++    fun hashOf(id: String): String? = read(id)?.let { hash(it) }
++
++    companion object {
++        const val BUILTIN = "builtin"
++
++        fun hash(bytes: ByteArray): String =
++            MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }.take(16)
++
++        fun title(id: String): String =
++            if (id == BUILTIN) "Встроенный" else id.substringAfter(':').removeSuffix(".json")
++    }
++}
+diff --git a/app/src/main/res/xml/file_paths.xml b/app/src/main/res/xml/file_paths.xml
+new file mode 100644
+index 0000000..fa9eac1
+--- /dev/null
++++ b/app/src/main/res/xml/file_paths.xml
+@@ -0,0 +1,4 @@
++<?xml version="1.0" encoding="utf-8"?>
++<paths>
++    <files-path name="history" path="history/" />
++</paths>
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 1b4481a..70dfb63 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -2,4 +2,5 @@ plugins {
+     id("com.android.application") version "8.7.3" apply false
+     id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+     id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
++    id("org.jetbrains.kotlin.plugin.serialization") version "2.0.21" apply false
+ }

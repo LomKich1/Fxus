@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 // Ключ подписи приходит из окружения (GitHub Secrets, см. .github/workflows/build.yml).
@@ -15,7 +16,7 @@ android {
 
     defaultConfig {
         applicationId = "com.lomkich.fxus"
-        minSdk = 26
+        minSdk = 29
         targetSdk = 35
         // номер запуска CI растёт сам, поэтому каждая сборка «новее» предыдущей и ставится поверх
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
@@ -45,6 +46,9 @@ android {
         checkReleaseBuilds = false
         abortOnError = false
     }
+    packaging {
+        resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/*.version", "/kotlin/**", "/DebugProbesKt.bin")
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -65,4 +69,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("dev.chrisbanes.haze:haze:1.5.4")
+
+    // экран картинок (бывший ComfyChat)
+    implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 }

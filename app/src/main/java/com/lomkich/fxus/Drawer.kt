@@ -51,6 +51,8 @@ fun DrawerContent(
     onDeleteChat: (String) -> Unit,
     onChats: () -> Unit,
     onArtifacts: () -> Unit,
+    onImages: () -> Unit,
+    onGallery: () -> Unit,
     onNewChat: () -> Unit,
     onProfile: () -> Unit,
     onLanguage: () -> Unit,
@@ -71,6 +73,8 @@ fun DrawerContent(
             modifier = Modifier.padding(start = 8.dp, top = 28.dp, bottom = 20.dp),
         )
         DrawerItem("Чаты", onChats)
+        DrawerItem("Изображения", onImages)
+        DrawerItem("Галерея", onGallery)
         DrawerItem("Артефакты", onArtifacts)
         Box(Modifier.fillMaxWidth().padding(vertical = 14.dp).height(1.dp).background(ColSurface))
         Text("Недавние", color = ColMuted, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp, bottom = 8.dp))

@@ -16,3 +16,11 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
+
+# kotlinx.serialization: сериализаторы классов экрана картинок (история в index.json)
+-keepattributes *Annotation*, InnerClasses, Signature, EnclosingMethod
+-keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
+-keepclasseswithmembers class kotlinx.serialization.json.** { kotlinx.serialization.KSerializer serializer(...); }
+-keep,includedescriptorclasses class com.lomkich.fxus.comfy.**$$serializer { *; }
+-keepclassmembers class com.lomkich.fxus.comfy.** { *** Companion; }
+-keepclasseswithmembers class com.lomkich.fxus.comfy.** { kotlinx.serialization.KSerializer serializer(...); }

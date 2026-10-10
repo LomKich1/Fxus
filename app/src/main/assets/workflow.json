@@ -1,0 +1,180 @@
+{
+  "1": {
+    "inputs": {
+      "text": [
+        "2",
+        0
+      ],
+      "threshold": 0.85,
+      "underscores_to_spaces": true,
+      "escape_parentheses": true
+    },
+    "class_type": "RuDanbooruTags",
+    "_meta": {
+      "title": "RU -> Danbooru Tags"
+    }
+  },
+  "2": {
+    "inputs": {
+      "value": "готическая внешность, девушка, черные волосы, красные глаза, без штанов, оверсайз фтуболка, черная футболка, одна девушка, растрепанные волосы, текст"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Строка (многострочная)"
+    }
+  },
+  "3": {
+    "inputs": {
+      "source": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Предпросмотр любого"
+    }
+  },
+  "4": {
+    "inputs": {
+      "source": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Предпросмотр любого"
+    }
+  },
+  "5": {
+    "inputs": {
+      "text": [
+        "12",
+        0
+      ],
+      "clip": [
+        "6",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Кодирование текста CLIP (Запрос)"
+    }
+  },
+  "6": {
+    "inputs": {
+      "ckpt_name": "vaelsem_vlsmv10.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Загрузить сheckpoint"
+    }
+  },
+  "7": {
+    "inputs": {
+      "seed": 951352267532147,
+      "steps": 20,
+      "cfg": 8,
+      "sampler_name": "dpmpp_2m_sde_gpu",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": [
+        "6",
+        0
+      ],
+      "positive": [
+        "5",
+        0
+      ],
+      "negative": [
+        "14",
+        0
+      ],
+      "latent_image": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "8": {
+    "inputs": {
+      "images": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Предварительный просмотр изображения"
+    }
+  },
+  "9": {
+    "inputs": {
+      "width": 2048,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Пустое латентное изображение"
+    }
+  },
+  "11": {
+    "inputs": {
+      "samples": [
+        "7",
+        0
+      ],
+      "vae": [
+        "22",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Декодировать VAE"
+    }
+  },
+  "12": {
+    "inputs": {
+      "string_a": "",
+      "string_b": [
+        "1",
+        0
+      ],
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Объединить"
+    }
+  },
+  "14": {
+    "inputs": {
+      "text": "score_6, score_5, score_4, worst quality, low quality, bad anatomy, bad hands, extra, fingers, extra limbs, signature",
+      "clip": [
+        "6",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Кодирование текста CLIP (Запрос)"
+    }
+  },
+  "22": {
+    "inputs": {
+      "vae_name": "sdxlVAE.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Загрузить VAE"
+    }
+  }
+}

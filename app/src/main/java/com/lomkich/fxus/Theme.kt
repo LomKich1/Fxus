@@ -132,6 +132,10 @@ fun FxusTheme(mode: ThemeMode, content: @Composable () -> Unit) {
             background = c.bg,
             surface = c.surface,
             surfaceContainer = c.surface, // фон выпадающего списка моделей
+            surfaceContainerLowest = c.drawer,
+            surfaceContainerLow = c.surface,
+            surfaceContainerHigh = c.user,   // попапы экрана картинок
+            surfaceContainerHighest = c.codeBgUser,
             surfaceVariant = c.user,
             surfaceTint = Color.Transparent, // без цветного налёта на диалогах и меню
             primary = c.accent,
@@ -146,6 +150,10 @@ fun FxusTheme(mode: ThemeMode, content: @Composable () -> Unit) {
             background = c.bg,
             surface = c.surface,
             surfaceContainer = c.surface,
+            surfaceContainerLowest = c.drawer,
+            surfaceContainerLow = c.surface,
+            surfaceContainerHigh = c.user,   // попапы экрана картинок
+            surfaceContainerHighest = c.codeBgUser,
             surfaceVariant = c.user,
             surfaceTint = Color.Transparent, // без цветного налёта на диалогах и меню
             primary = c.accent,
