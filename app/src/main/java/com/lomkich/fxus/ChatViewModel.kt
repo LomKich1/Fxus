@@ -39,15 +39,25 @@ private const val HELP = """Команды (как в ollama):
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = app.getSharedPreferences("fxus", Context.MODE_PRIVATE)
-    private val client = OllamaClient()
+    private val ollama = OllamaClient()
+    private val llama = LlamaClient()
     private val store = ChatStore(app)
     private val saveLock = Mutex()
 
     val messages = mutableStateListOf<Msg>()
     var busy by mutableStateOf(false)
+        private set
     /** Генерация картинок для «сделай фото»; подключает приложение (см. App.kt). */
     var images: ImageService? = null
-    var model by mutableStateOf(prefs.getString("model", "").orEmpty())
+    /** Какой сервер на том конце. Объявлен раньше model: имя модели хранится отдельно для каждого бэкенда. */
+    var backend by mutableStateOf(
+        Backend.entries.firstOrNull { it.name == prefs.getString("backend", null) } ?: Backend.OLLAMA
+    )
+        private set
+    /** Ключ для llama-server, если он запущен с --api-key. Пусто = без авторизации. */
+    var apiKey by mutableStateOf(prefs.getString("api_key", "").orEmpty())
+        private set
+    var model by mutableStateOf(prefs.getString(modelKey(backend), "").orEmpty())
         private set
     var models by mutableStateOf<List<String>>(emptyList())
         private set
@@ -87,6 +97,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     /** Сервер на этом же телефоне: только тогда его можно запускать и останавливать из приложения. */
     val isLocalHost: Boolean get() = host.contains("127.0.0.1") || host.contains("localhost")
+    /** Запускать/останавливать сервер из приложения можно только для Ollama на этом телефоне (через Termux). */
+    val canManage: Boolean get() = backend == Backend.OLLAMA && isLocalHost
     /** Последнее сообщение о запуске/остановке сервера (показывается в списке моделей). */
     var launchNote by mutableStateOf<String?>(null)
         private set
@@ -128,7 +140,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         currentId = null
     }
 
-    fun saveSettings(newNick: String, newHost: String, newSystem: String, newAutoStart: Boolean, newIdleMinutes: Int) {
+    fun saveSettings(
+        newNick: String,
+        newHost: String,
+        newSystem: String,
+        newAutoStart: Boolean,
+        newIdleMinutes: Int,
+        newBackend: Backend,
+        newApiKey: String,
+    ) {
+        if (newBackend != backend) {
+            // у Ollama и llama-server свои имена моделей: подтягиваем последнюю выбранную для нового бэкенда
+            backend = newBackend
+            model = prefs.getString(modelKey(newBackend), "").orEmpty()
+            models = emptyList()
+        }
+        apiKey = newApiKey.trim()
         nick = newNick.trim()
         host = newHost.trim().trimEnd('/').ifBlank { DEFAULT_HOST }
         systemPrompt = newSystem.trim()
@@ -140,6 +167,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             .putString("system", systemPrompt)
             .putBoolean("autostart", autoStart)
             .putInt("idle_min", idleMinutes)
+            .putString("backend", backend.name)
+            .putString("api_key", apiKey)
             .apply()
         refreshModels()
     }
@@ -214,7 +243,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectModel(name: String) {
         model = name
-        prefs.edit().putString("model", name).apply()
+        prefs.edit().putString(modelKey(backend), name).apply()
     }
 
     // ---------- чат ----------
@@ -242,7 +271,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         persist()
-        val body = buildBody()
+        val be = backend
+        val body = buildBody(be)
         val replyId = add(Role.ASSISTANT, streaming = true)
         busy = true
         stopped = false
@@ -254,7 +284,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 // сервер лёг (например, остановился по простою): поднимаем сам и ждём, пока на экране крутятся точки
                 if (autoStart && canLaunch() && !reachable()) launchServer()
-                client.chat(host, body).collect { c ->
+                val stream = when (be) {
+                    Backend.OLLAMA -> ollama.chat(host, body)
+                    Backend.LLAMA -> llama.chat(host, apiKey, body)
+                }
+                stream.collect { c ->
                     val now = System.currentTimeMillis()
                     if (thinkStart == 0L && c.thinking.isNotEmpty()) thinkStart = now
                     if (thinkStart != 0L && thinkMs == 0L && c.content.isNotEmpty()) thinkMs = now - thinkStart
@@ -292,7 +326,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun buildBody(): JSONObject {
+    private fun buildBody(be: Backend): JSONObject {
         val arr = JSONArray()
         val sysText = listOfNotNull(
             systemPrompt.takeIf { it.isNotBlank() },
@@ -309,8 +343,34 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             .put("model", model)
             .put("messages", arr)
             .put("stream", true)
-        think?.let { body.put("think", it) }
-        if (options.length() > 0) body.put("options", options)
+        when (be) {
+            Backend.OLLAMA -> {
+                think?.let { body.put("think", it) }
+                if (options.length() > 0) body.put("options", options)
+            }
+            Backend.LLAMA -> {
+                // у llama-server параметры лежат прямо в корне запроса, а не в options
+                val keys = options.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    when (k) {
+                        "num_ctx" -> {}   // размер контекста задаётся при запуске сервера (-c), в запросе его не поменять
+                        "num_predict" -> body.put("max_tokens", options.get(k))
+                        else -> body.put(k, options.get(k))
+                    }
+                }
+                when (val t = think) {
+                    false -> {
+                        // reasoning_effort=none по документации llama-server выключает рассуждения;
+                        // enable_thinking нужен шаблонам вроде Qwen3, остальные его игнорируют
+                        body.put("reasoning_effort", "none")
+                        body.put("chat_template_kwargs", JSONObject().put("enable_thinking", false))
+                    }
+                    is String -> body.put("reasoning_effort", t)
+                    else -> {}   // не задано или true: как решит шаблон модели
+                }
+            }
+        }
         return body
     }
 
@@ -328,7 +388,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
             "set" -> set(parts.getOrNull(1)?.lowercase(), parts.getOrNull(2))
             "show" -> sys(
-                "model: ${model.ifBlank { "—" }}\nhost: $host\nnick: ${nick.ifBlank { "—" }}\nthink: ${think ?: "по умолчанию"}\n" +
+                "backend: ${backend.label}\nmodel: ${model.ifBlank { "—" }}\nhost: $host\nnick: ${nick.ifBlank { "—" }}\nthink: ${think ?: "по умолчанию"}\n" +
                     "system: ${systemPrompt.ifBlank { "—" }}\noptions: $options"
             )
             "load" -> {
@@ -377,7 +437,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     sys("Использование: /set parameter <имя> <значение>")
                 } else {
                     options.put(kv[0], parseValue(kv[1]))
-                    sys("${kv[0]} = ${kv[1]}")
+                    if (backend == Backend.LLAMA && kv[0] == "num_ctx") {
+                        sys("num_ctx на llama-server не меняется из чата: он задаётся при запуске сервера флагом -c.")
+                    } else {
+                        sys("${kv[0]} = ${kv[1]}")
+                    }
                 }
             }
             else -> sys("Не знаю /set ${sub.orEmpty()}. Есть: think, nothink, system, parameter.")
@@ -393,8 +457,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         launchNote = text
     }
 
+    private suspend fun fetchModels(): List<String> = when (backend) {
+        Backend.OLLAMA -> ollama.tags(host)
+        Backend.LLAMA -> llama.models(host, apiKey)
+    }
+
     private suspend fun reachable(): Boolean = try {
-        client.tags(host)
+        fetchModels()
         true
     } catch (e: CancellationException) {
         throw e
@@ -405,7 +474,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Можно ли запускать сервер молча: адрес локальный, Termux есть и уже разрешил нам команды. */
     private fun canLaunch(): Boolean {
         val ctx = getApplication<Application>()
-        return isLocalHost && Termux.installed(ctx) && Termux.hasPermission(ctx)
+        return canManage && Termux.installed(ctx) && Termux.hasPermission(ctx)
     }
 
     /**
@@ -503,7 +572,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun loadModels() {
         try {
-            val list = client.tags(host)
+            val list = fetchModels()
             models = list
             serverError = null
             if (model.isBlank() && list.isNotEmpty()) selectModel(list.first())
@@ -516,8 +585,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun describe(e: Exception): String = when (e) {
-        is ConnectException, is UnknownHostException, is SocketTimeoutException ->
-            if (isLocalHost) "Ollama не запущена. Нажми на модель в шапке и запусти её." else "Нет связи с $host"
+        is ConnectException, is UnknownHostException, is SocketTimeoutException -> when {
+            backend == Backend.LLAMA ->
+                "Нет связи с $host. Проверь: llama-server запущен с --host 0.0.0.0, порт открыт в файрволе, телефон и ПК в одной сети."
+            isLocalHost -> "Ollama не запущена. Нажми на модель в шапке и запусти её."
+            else -> "Нет связи с $host"
+        }
         else -> "Ошибка: ${e.message}"
     }
 
@@ -539,6 +612,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
+        /** Ollama оставил старый ключ "model", чтобы не сбросить уже выбранную модель после обновления. */
+        fun modelKey(b: Backend) = if (b == Backend.LLAMA) "model_llama" else "model"
+
         const val DOUBLE =
             "VGVtcGVzdCBEb3VibGU6INC60L7Qv9C40Y8g0YHQvtC30LTQsNC90LAuINCa0LDQutCw0Y8g0LjQtyDQvdC40YUg0L3QsNGB0YLQvtGP0YnQsNGPIOKAlCDQstC+0L/RgNC+0YEg0L7RgtC60YDRi9GC0YvQuS4="
     }

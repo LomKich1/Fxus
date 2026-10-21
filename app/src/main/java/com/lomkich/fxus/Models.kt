@@ -14,3 +14,9 @@ data class Msg(
     /** id картинки в истории ComfyUI (0 = обычное сообщение). Сама картинка живёт в экране «Артефакты». */
     val turnId: Long = 0L,
 )
+
+/** Что за сервер на том конце: у Ollama и llama-server разные API. */
+enum class Backend(val label: String) {
+    OLLAMA("Ollama"),
+    LLAMA("llama.cpp"),
+}

@@ -90,6 +90,8 @@ fun ComingSoon(title: String, onBack: () -> Unit) {
 
 @Composable
 fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
+    var backend by rememberSaveable { mutableStateOf(vm.backend) }
+    var apiKey by rememberSaveable { mutableStateOf(vm.apiKey) }
     var host by rememberSaveable { mutableStateOf(vm.host) }
     var nick by rememberSaveable { mutableStateOf(vm.nick) }
     var system by rememberSaveable { mutableStateOf(vm.systemPrompt) }
@@ -111,53 +113,69 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
+            BackendPicker(backend) { backend = it; saved = false }
+            Spacer(Modifier.height(16.dp))
             Field(
-                label = "Адрес сервера Ollama",
+                label = "Адрес сервера",
                 value = host,
                 onChange = { host = it; saved = false },
-                hint = status,
+                hint = listOfNotNull(
+                    if (backend == Backend.LLAMA) "Пример: http://192.168.1.10:8080 (IP ПК и порт llama-server)." else null,
+                    status,
+                ).joinToString(" ").ifBlank { null },
                 keyboardType = KeyboardType.Uri,
             )
-            Spacer(Modifier.height(16.dp))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(ColSurface)
-                    .clickable { auto = !auto; saved = false }
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Запускать Ollama автоматически", color = ColText, fontSize = 16.sp)
-                    Text(
-                        "При открытии приложения и при отправке сообщения, если сервер не отвечает. Только для локального адреса.",
-                        color = ColMuted,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Switch(
-                    checked = auto,
-                    onCheckedChange = { auto = it; saved = false },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = ColOnAccent,
-                        checkedTrackColor = ColAccent,
-                        uncheckedThumbColor = ColMuted,
-                        uncheckedTrackColor = ColSurface,
-                        uncheckedBorderColor = ColUser,
-                    ),
+            if (backend == Backend.LLAMA) {
+                Spacer(Modifier.height(16.dp))
+                Field(
+                    label = "API-ключ",
+                    value = apiKey,
+                    onChange = { apiKey = it; saved = false },
+                    hint = "Только если сервер запущен с --api-key. Иначе оставь пустым.",
                 )
             }
-            Spacer(Modifier.height(16.dp))
-            Field(
-                label = "Остановка при простое, минут",
-                value = idle,
-                onChange = { idle = it.filter(Char::isDigit).take(3); saved = false },
-                hint = "0 = не останавливать. Работает для сервера, который запустил Fxus, действует со следующего запуска.",
-                keyboardType = KeyboardType.Number,
-            )
+            if (backend == Backend.OLLAMA) {
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(ColSurface)
+                        .clickable { auto = !auto; saved = false }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Запускать Ollama автоматически", color = ColText, fontSize = 16.sp)
+                        Text(
+                            "При открытии приложения и при отправке сообщения, если сервер не отвечает. Только для локального адреса.",
+                            color = ColMuted,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(
+                        checked = auto,
+                        onCheckedChange = { auto = it; saved = false },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = ColOnAccent,
+                            checkedTrackColor = ColAccent,
+                            uncheckedThumbColor = ColMuted,
+                            uncheckedTrackColor = ColSurface,
+                            uncheckedBorderColor = ColUser,
+                        ),
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                Field(
+                    label = "Остановка при простое, минут",
+                    value = idle,
+                    onChange = { idle = it.filter(Char::isDigit).take(3); saved = false },
+                    hint = "0 = не останавливать. Работает для сервера, который запустил Fxus, действует со следующего запуска.",
+                    keyboardType = KeyboardType.Number,
+                )
+            }
             Spacer(Modifier.height(20.dp))
             Field(
                 label = "Ник",
@@ -183,7 +201,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                     .clip(RoundedCornerShape(24.dp))
                     .background(ColAccent)
                     .clickable {
-                        vm.saveSettings(nick, host, system, auto, idle.toIntOrNull() ?: vm.idleMinutes)
+                        vm.saveSettings(nick, host, system, auto, idle.toIntOrNull() ?: vm.idleMinutes, backend, apiKey)
                         saved = true
                     }
                     .padding(horizontal = 28.dp),
@@ -193,6 +211,36 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
             }
             if (saved) {
                 Text("Сохранено", color = ColMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp, start = 4.dp))
+            }
+        }
+    }
+}
+
+/** Переключатель «Ollama / llama.cpp»: две плашки, выбранная светлая. */
+@Composable
+private fun BackendPicker(selected: Backend, onPick: (Backend) -> Unit) {
+    Column {
+        Text("Сервер", color = ColMuted, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(ColSurface)
+                .padding(4.dp),
+        ) {
+            Backend.entries.forEach { b ->
+                val on = b == selected
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (on) ColAccent else ColSurface)
+                        .clickable { onPick(b) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(b.label, color = if (on) ColBg else ColText, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                }
             }
         }
     }

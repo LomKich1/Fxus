@@ -407,7 +407,7 @@ private fun MenuButton(onClick: () -> Unit) {
 /**
  * Панель со списком моделей: стекло, строки со скруглённой подсветкой выбранной.
  * Внизу управление сервером: нет связи, значит «Запустить», есть, значит «Остановить».
- * Для удалённого сервера (адрес не 127.0.0.1) кнопки нет, мы им не управляем.
+ * Для удалённого сервера (адрес не 127.0.0.1) и для llama-server кнопки нет, мы ими не управляем.
  */
 @Composable
 private fun ModelList(vm: ChatViewModel, onServer: () -> Unit, onPicked: () -> Unit) {
@@ -424,7 +424,7 @@ private fun ModelList(vm: ChatViewModel, onServer: () -> Unit, onPicked: () -> U
     ) {
         if (vm.models.isEmpty()) {
             Text(
-                vm.serverError ?: "Моделей нет. В Termux: ollama pull <имя>",
+                vm.serverError ?: if (vm.backend == Backend.OLLAMA) "Моделей нет. В Termux: ollama pull <имя>" else "Сервер ответил, но модели на нём нет",
                 color = ColMuted,
                 fontSize = 14.sp,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
@@ -437,7 +437,7 @@ private fun ModelList(vm: ChatViewModel, onServer: () -> Unit, onPicked: () -> U
                 }
             }
         }
-        if (vm.isLocalHost) {
+        if (vm.canManage) {
             Spacer(Modifier.height(6.dp))
             Box(
                 Modifier
