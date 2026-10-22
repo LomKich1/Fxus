@@ -15,6 +15,7 @@ data class ChatMeta(val id: String, val title: String, val updatedAt: Long)
 class ChatStore(context: Context) {
 
     private val dir = File(context.filesDir, "chats").apply { mkdirs() }
+    private val attachDir = File(context.filesDir, "attachments")
     private val indexFile = File(dir, "index.json")
 
     private fun chatFile(id: String) = File(dir, "$id.json")
@@ -50,6 +51,36 @@ class ChatStore(context: Context) {
         atomicWrite(indexFile, JSONObject().put("chats", arr).toString())
     }
 
+    private fun attachmentsToJson(list: List<Attachment>): JSONArray {
+        val arr = JSONArray()
+        list.forEach {
+            arr.put(
+                JSONObject()
+                    .put("kind", it.kind.name)
+                    .put("name", it.name)
+                    .put("text", it.text)
+                    .put("file", it.file)
+                    .put("bytes", it.bytes)
+            )
+        }
+        return arr
+    }
+
+    // у старых чатов поля attachments нет, тогда arr == null и вложений просто нет
+    private fun attachmentsFromJson(arr: JSONArray?): List<Attachment> {
+        if (arr == null) return emptyList()
+        return List(arr.length()) {
+            val o = arr.getJSONObject(it)
+            Attachment(
+                kind = AttachKind.valueOf(o.getString("kind")),
+                name = o.getString("name"),
+                text = o.optString("text"),
+                file = o.optString("file"),
+                bytes = o.optInt("bytes"),
+            )
+        }
+    }
+
     @Synchronized
     fun listMeta(): List<ChatMeta> = readIndex().sortedByDescending { it.updatedAt }
 
@@ -65,6 +96,7 @@ class ChatStore(context: Context) {
                     .put("thinking", it.thinking)
                     .put("thinkMs", it.thinkMs)
                     .put("turnId", it.turnId)
+                    .put("attachments", attachmentsToJson(it.attachments))
             )
         }
         atomicWrite(chatFile(id), JSONObject().put("messages", arr).toString())
@@ -90,6 +122,7 @@ class ChatStore(context: Context) {
                 thinking = o.optString("thinking"),
                 thinkMs = o.optLong("thinkMs"),
                 turnId = o.optLong("turnId"),
+                attachments = attachmentsFromJson(o.optJSONArray("attachments")),
             )
         }
     } catch (e: Exception) {
@@ -103,6 +136,10 @@ class ChatStore(context: Context) {
 
     @Synchronized
     fun delete(id: String) {
+        // картинки лежат отдельными файлами, и без этого они остались бы на диске навсегда
+        load(id).flatMap { it.attachments }
+            .filter { it.kind == AttachKind.IMAGE }
+            .forEach { File(attachDir, it.file).delete() }
         chatFile(id).delete()
         writeIndex(readIndex().filter { it.id != id })
     }

@@ -2,6 +2,7 @@ package com.lomkich.fxus
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -45,6 +46,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val saveLock = Mutex()
 
     val messages = mutableStateListOf<Msg>()
+    /** Вложения, которые выбраны, но ещё не отправлены. Живут тут, а не в поле ввода, чтобы пережить поворот экрана. */
+    val pending = mutableStateListOf<Attachment>()
     var busy by mutableStateOf(false)
         private set
     /** Генерация картинок для «сделай фото»; подключает приложение (см. App.kt). */
@@ -120,13 +123,45 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun send(raw: String) {
         val text = raw.trim()
-        if (text.isEmpty() || busy) return
+        if ((text.isEmpty() && pending.isEmpty()) || busy) return
         if (text.startsWith("/")) {
             command(text)
             return
         }
-        val photo = ImageRequest.parse(text)
-        if (photo != null) imageChat(text, photo) else chat(text)
+        val files = pending.toList()
+        pending.clear()
+        // с вложениями это всегда обычный разговор с моделью, «сделай фото» не разбираем
+        val photo = if (files.isEmpty()) ImageRequest.parse(text) else null
+        if (photo != null) imageChat(text, photo) else chat(text, files)
+    }
+
+    /** Файлы из системного выбора. Читаем и сжимаем в фоне; что не вышло, сообщаем строкой в чате. */
+    fun attach(uris: List<Uri>) {
+        viewModelScope.launch {
+            for (uri in uris) {
+                when (val r = withContext(Dispatchers.IO) { Attachments.load(getApplication<Application>(), uri) }) {
+                    is Attachments.Result.Ok -> pending.add(r.att)
+                    is Attachments.Result.Fail -> sys(r.why)
+                }
+            }
+        }
+    }
+
+    /** Длинная вставка из буфера: превращаем во вложение .txt, как это делает чат Claude. */
+    fun attachPasted(text: String) {
+        val n = pending.count { it.name.startsWith("pasted_text") } + 1
+        val name = if (n == 1) "pasted_text.txt" else "pasted_text_$n.txt"
+        pending.add(Attachment(AttachKind.TEXT, name, text = text, bytes = text.toByteArray().size))
+    }
+
+    fun removePending(a: Attachment) {
+        pending.remove(a)
+        Attachments.delete(getApplication<Application>(), listOf(a))
+    }
+
+    private fun clearPending() {
+        Attachments.delete(getApplication<Application>(), pending.toList())
+        pending.clear()
     }
 
     fun stop() {
@@ -136,6 +171,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun newChat() {
         stop()
+        clearPending()
         messages.clear()
         currentId = null
     }
@@ -186,6 +222,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openChat(id: String) {
         stop()
+        clearPending()
         viewModelScope.launch {
             val loaded = withContext(Dispatchers.IO) { store.load(id) }
             messages.clear()
@@ -220,11 +257,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun persist() {
         val snapshot = messages.filter {
             (it.role == Role.USER || it.role == Role.ASSISTANT) &&
-                (it.content.isNotEmpty() || it.thinking.isNotEmpty() || it.turnId != 0L)
+                (it.content.isNotEmpty() || it.thinking.isNotEmpty() || it.turnId != 0L || it.attachments.isNotEmpty())
         }
         if (snapshot.isEmpty()) return
         val id = currentId ?: System.currentTimeMillis().toString(36).also { currentId = it }
-        val title = autoTitle(snapshot.firstOrNull { it.role == Role.USER }?.content.orEmpty())
+        val title = autoTitle(
+            snapshot.firstOrNull { it.role == Role.USER }
+                ?.let { m -> m.content.ifBlank { m.attachments.firstOrNull()?.name.orEmpty() } }
+                .orEmpty()
+        )
         viewModelScope.launch {
             saveLock.withLock { withContext(Dispatchers.IO) { store.save(id, title, snapshot) } }
             chats = withContext(Dispatchers.IO) { store.listMeta() }
@@ -264,15 +305,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         persist()
     }
 
-    private fun chat(text: String) {
-        add(Role.USER, text)
+    private fun chat(text: String, files: List<Attachment>) {
+        messages.add(Msg(nextId++, Role.USER, text, attachments = files))
         if (model.isBlank()) {
             sys("Модель не выбрана. Выбери её в шапке.")
             return
         }
         persist()
         val be = backend
-        val body = buildBody(be)
+        val history = messages.toList()   // снимок до пустого ответа ассистента
         val replyId = add(Role.ASSISTANT, streaming = true)
         busy = true
         stopped = false
@@ -282,6 +323,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             var thinkStart = 0L
             var thinkMs = 0L
             try {
+                // чтение картинок с диска и base64 делаем не на главном потоке
+                val body = withContext(Dispatchers.IO) { buildBody(be, history) }
                 // сервер лёг (например, остановился по простою): поднимаем сам и ждём, пока на экране крутятся точки
                 if (autoStart && canLaunch() && !reachable()) launchServer()
                 val stream = when (be) {
@@ -326,18 +369,53 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun buildBody(be: Backend): JSONObject {
+    /** Текстовые вложения идут в промпт перед вопросом, каждое в теге с именем файла. */
+    private fun textWithFiles(m: Msg): String {
+        val files = m.attachments.filter { it.kind == AttachKind.TEXT }
+        if (files.isEmpty()) return m.content
+        val sb = StringBuilder()
+        files.forEach {
+            sb.append("<file name=\"").append(it.name.replace('"', '\'')).append("\">\n")
+                .append(it.text.trimEnd()).append("\n</file>\n\n")
+        }
+        return sb.append(m.content).toString().trimEnd()
+    }
+
+    /** Сообщение пользователя с картинками: у Ollama они лежат в поле images, у llama-server (OpenAI) среди частей content. */
+    private fun userJson(m: Msg, be: Backend): JSONObject {
+        val text = textWithFiles(m)
+        val images = m.attachments
+            .filter { it.kind == AttachKind.IMAGE }
+            .mapNotNull { Attachments.base64(getApplication<Application>(), it) }
+        val o = JSONObject().put("role", "user")
+        when {
+            images.isEmpty() -> o.put("content", text)
+            be == Backend.OLLAMA -> o.put("content", text).put("images", JSONArray(images))
+            else -> {
+                val parts = JSONArray()
+                if (text.isNotBlank()) parts.put(JSONObject().put("type", "text").put("text", text))
+                images.forEach { b64 ->
+                    val url = JSONObject().put("url", "data:image/jpeg;base64,$b64")
+                    parts.put(JSONObject().put("type", "image_url").put("image_url", url))
+                }
+                o.put("content", parts)
+            }
+        }
+        return o
+    }
+
+    private fun buildBody(be: Backend, history: List<Msg>): JSONObject {
         val arr = JSONArray()
         val sysText = listOfNotNull(
             systemPrompt.takeIf { it.isNotBlank() },
             nick.takeIf { it.isNotBlank() }?.let { "Пользователя зовут $it." },
         ).joinToString("\n")
         if (sysText.isNotBlank()) arr.put(JSONObject().put("role", "system").put("content", sysText))
-        messages
-            .filter { (it.role == Role.USER || it.role == Role.ASSISTANT) && it.content.isNotBlank() }
+        history
+            .filter { (it.role == Role.USER || it.role == Role.ASSISTANT) && (it.content.isNotBlank() || it.attachments.isNotEmpty()) }
             .forEach {
-                val role = if (it.role == Role.USER) "user" else "assistant"
-                arr.put(JSONObject().put("role", role).put("content", it.content))
+                if (it.role == Role.USER) arr.put(userJson(it, be))
+                else arr.put(JSONObject().put("role", "assistant").put("content", it.content))
             }
         val body = JSONObject()
             .put("model", model)

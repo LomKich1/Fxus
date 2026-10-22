@@ -3,6 +3,7 @@ package com.lomkich.fxus
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.speech.RecognizerIntent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
@@ -263,7 +264,15 @@ fun ChatScreen(vm: ChatViewModel, onMenu: () -> Unit, imageContent: @Composable 
                 .padding(top = 12.dp)
                 .navigationBarsPadding()
         ) {
-            InputBar(busy = vm.busy, onSend = vm::send, onStop = vm::stop)
+            InputBar(
+                busy = vm.busy,
+                pending = vm.pending,
+                onSend = vm::send,
+                onStop = vm::stop,
+                onAttach = vm::attach,
+                onPaste = vm::attachPasted,
+                onRemove = vm::removePending,
+            )
         }
 
         // Список моделей. Невидимый слой ловит тап мимо и закрывает список.
@@ -512,7 +521,13 @@ private fun MessageItem(m: Msg, imageContent: @Composable (Long) -> Unit) {
                     .background(ColUser)
                     .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
-                SelectionContainer { Markdown(m.content, codeBg = ColCodeBgUser) }
+                Column {
+                    if (m.attachments.isNotEmpty()) {
+                        AttachmentRow(m.attachments, chipBg = ColCodeBgUser, thumb = 88.dp)
+                        if (m.content.isNotBlank()) Spacer(Modifier.height(8.dp))
+                    }
+                    if (m.content.isNotBlank()) SelectionContainer { Markdown(m.content, codeBg = ColCodeBgUser) }
+                }
             }
         }
         Role.ASSISTANT -> if (m.turnId != 0L) {
@@ -689,13 +704,21 @@ private fun AssistantMessage(m: Msg) {
 
 private enum class Action { MIC, SEND, STOP }
 
-/** Поле и кнопка в одном контейнере. Кнопка: микрофон / отправить / стоп. */
+/** Поле и кнопка в одном контейнере. Слева «+» (файлы), справа: микрофон / отправить / стоп. Над полем плашки вложений. */
 @Composable
-private fun InputBar(busy: Boolean, onSend: (String) -> Unit, onStop: () -> Unit) {
+private fun InputBar(
+    busy: Boolean,
+    pending: List<Attachment>,
+    onSend: (String) -> Unit,
+    onStop: () -> Unit,
+    onAttach: (List<Uri>) -> Unit,
+    onPaste: (String) -> Unit,
+    onRemove: (Attachment) -> Unit,
+) {
     var text by rememberSaveable { mutableStateOf("") }
     val action = when {
         busy -> Action.STOP
-        text.isBlank() -> Action.MIC
+        text.isBlank() && pending.isEmpty() -> Action.MIC
         else -> Action.SEND
     }
 
@@ -706,43 +729,70 @@ private fun InputBar(busy: Boolean, onSend: (String) -> Unit, onStop: () -> Unit
         if (!heard.isNullOrBlank()) text = if (text.isBlank()) heard else "$text $heard"
     }
 
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-            .glass(RoundedCornerShape(26.dp))
-            .padding(start = 18.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        Box(
-            Modifier.weight(1f).heightIn(min = 44.dp).padding(vertical = 10.dp),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            if (text.isEmpty()) Text("Как я могу вам помочь сегодня?", color = ColMuted, fontSize = 16.sp)
-            BasicTextField(
-                value = text,
-                onValueChange = { text = it },
-                textStyle = TextStyle(color = ColText, fontSize = 16.sp),
-                cursorBrush = SolidColor(ColText),
-                maxLines = 6,
-                modifier = Modifier.fillMaxWidth(),
+    // Системный выбор файлов, разрешения не нужны. Просим любые типы: у кода (.kt, .cpp…) MIME непредсказуемый,
+    // поэтому текст это или картинка, решаем сами при чтении.
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) onAttach(uris)
+    }
+
+    Column {
+        if (pending.isNotEmpty()) {
+            AttachmentRow(
+                pending,
+                chipBg = ColSurface,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+                thumb = 56.dp,
+                onRemove = onRemove,
             )
         }
-        ActionButton(action) {
-            when (action) {
-                Action.STOP -> onStop()
-                Action.SEND -> {
-                    onSend(text)
-                    text = ""
-                }
-                Action.MIC -> {
-                    try {
-                        speech.launch(
-                            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                        )
-                    } catch (e: ActivityNotFoundException) {
-                        // на телефоне нет распознавателя речи, молча ничего не делаем
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .glass(RoundedCornerShape(26.dp))
+                .padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            AttachButton { pick.launch(arrayOf("*/*")) }
+            Box(
+                Modifier.weight(1f).heightIn(min = 44.dp).padding(vertical = 10.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (text.isEmpty()) Text("Как я могу вам помочь сегодня?", color = ColMuted, fontSize = 16.sp)
+                BasicTextField(
+                    value = text,
+                    onValueChange = { new ->
+                        // огромная вставка из буфера уходит во вложение .txt, а поле остаётся с прежним текстом
+                        val paste = Attachments.bigPaste(text, new)
+                        if (paste != null) {
+                            onPaste(paste.first)
+                            text = paste.second
+                        } else {
+                            text = new
+                        }
+                    },
+                    textStyle = TextStyle(color = ColText, fontSize = 16.sp),
+                    cursorBrush = SolidColor(ColText),
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            ActionButton(action) {
+                when (action) {
+                    Action.STOP -> onStop()
+                    Action.SEND -> {
+                        onSend(text)
+                        text = ""
+                    }
+                    Action.MIC -> {
+                        try {
+                            speech.launch(
+                                Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                            )
+                        } catch (e: ActivityNotFoundException) {
+                            // на телефоне нет распознавателя речи, молча ничего не делаем
+                        }
                     }
                 }
             }
