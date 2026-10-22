@@ -53,7 +53,7 @@ import com.lomkich.fxus.comfy.ImageChatScreen
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-enum class Screen { CHAT, CHATS, IMAGES, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
+enum class Screen { CHAT, CHATS, IMAGES, DIALOG, ARTIFACTS, SETTINGS, LANGUAGE, HELP }
 
 /**
  * Три слоя: меню лежит сзади, главный экран (чат или картинки) над ним, а вторичные экраны
@@ -74,6 +74,8 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
     // Генератор картинок живёт на уровне приложения: им пользуются и экран «Изображения»,
     // и обычный чат по запросу «сделай фото», и «Артефакты».
     val comfy: ComfyViewModel = viewModel()
+    // Диалог двух ИИ тоже живёт на уровне приложения: разговор продолжается, пока ты ходишь по меню.
+    val dialog: DialogViewModel = viewModel()
     LaunchedEffect(comfy) { vm.images = ComfyImageService(comfy) }
     // 0 = меню закрыто, 1 = открыто. Animatable, потому что палец тоже двигает значение.
     val progress = remember { Animatable(if (drawerOpen) 1f else 0f) }
@@ -236,6 +238,7 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                 onChats = { openOverlay(Screen.CHATS) },
                 onArtifacts = { openOverlay(Screen.ARTIFACTS) },
                 onImages = { go(Screen.IMAGES) },
+                onDialog = { go(Screen.DIALOG) },
                 onNewChat = {
                     vm.newChat()
                     go(Screen.CHAT)
@@ -254,12 +257,12 @@ fun FxusApp(vm: ChatViewModel = viewModel()) {
                 .background(ColBg)
                 .then(openSwipe)
         ) {
-            if (screen == Screen.IMAGES) {
+            when (screen) {
                 // экран картинок, как и чат, сам рисует под системными панелями и сам берёт отступы
-                ImageChatScreen(comfy, onMenu = ::openDrawer)
-            } else {
+                Screen.IMAGES -> ImageChatScreen(comfy, onMenu = ::openDrawer)
+                Screen.DIALOG -> DialogScreen(vm, dialog, onMenu = ::openDrawer)
                 // чат сам рисует контент под системными панелями и сам обрабатывает отступы
-                ChatScreen(vm, onMenu = ::openDrawer, imageContent = { id -> ImageResult(comfy, id) })
+                else -> ChatScreen(vm, onMenu = ::openDrawer, imageContent = { id -> ImageResult(comfy, id) })
             }
             // Пока меню открыто: тап по сдвинутому экрану закрывает, свайп влево тоже.
             // dragMenu стоит последним в цепочке (внутренний), чтобы свайп забирал жест раньше тапа.
