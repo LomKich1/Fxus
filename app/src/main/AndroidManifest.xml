@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Галерея фото внутри приложения (панель «Фото» в меню «+») -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
     <!-- Termux объявляет это разрешение как dangerous: выдаётся пользователем один раз -->
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
