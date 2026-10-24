@@ -28,8 +28,6 @@ const val DEFAULT_HOST = "http://127.0.0.1:11434"
 
 private const val HELP = """Команды (как в ollama):
 /clear — очистить контекст
-/set nothink — выключить рассуждения
-/set think [high|medium|low] — включить
 /set system <текст> — системный промпт
 /set parameter <имя> <значение>
 /show — текущие настройки
@@ -49,6 +47,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Вложения, которые выбраны, но ещё не отправлены. Живут тут, а не в поле ввода, чтобы пережить поворот экрана. */
     val pending = mutableStateListOf<Attachment>()
     var busy by mutableStateOf(false)
+        private set
+    /** Кнопка «Рассуждение» в поле ввода. Помнится между запусками. */
+    var thinkOn by mutableStateOf(prefs.getBoolean("think", false))
+        private set
+    /** Кнопка «Поиск»: пока заглушка, на запросы не влияет. */
+    var searchOn by mutableStateOf(false)
         private set
     /** Генерация картинок для «сделай фото»; подключает приложение (см. App.kt). */
     var images: ImageService? = null
@@ -106,7 +110,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var launchNote by mutableStateOf<String?>(null)
         private set
 
-    private var think: Any? = null          // null = не слать поле think вообще
     private val options = JSONObject()
     private var job: Job? = null
     private var stopped = false
@@ -162,6 +165,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun clearPending() {
         Attachments.delete(getApplication<Application>(), pending.toList())
         pending.clear()
+    }
+
+    fun toggleThink() {
+        thinkOn = !thinkOn
+        prefs.edit().putBoolean("think", thinkOn).apply()
+    }
+
+    fun toggleSearch() {
+        searchOn = !searchOn
     }
 
     fun stop() {
@@ -347,7 +359,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 if (content.isEmpty() && thinking.isNotEmpty()) {
-                    sys("Модель выдала только рассуждения, без ответа. Попробуй /set nothink.")
+                    sys("Модель выдала только рассуждения, без ответа. Выключи «Рассуждение» под полем ввода.")
                 } else if (content.isEmpty()) {
                     sys("Пустой ответ от модели.")
                 }
@@ -423,7 +435,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             .put("stream", true)
         when (be) {
             Backend.OLLAMA -> {
-                think?.let { body.put("think", it) }
+                body.put("think", thinkOn)
                 if (options.length() > 0) body.put("options", options)
             }
             Backend.LLAMA -> {
@@ -437,15 +449,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         else -> body.put(k, options.get(k))
                     }
                 }
-                when (val t = think) {
-                    false -> {
-                        // reasoning_effort=none по документации llama-server выключает рассуждения;
-                        // enable_thinking нужен шаблонам вроде Qwen3, остальные его игнорируют
-                        body.put("reasoning_effort", "none")
-                        body.put("chat_template_kwargs", JSONObject().put("enable_thinking", false))
-                    }
-                    is String -> body.put("reasoning_effort", t)
-                    else -> {}   // не задано или true: как решит шаблон модели
+                if (thinkOn) {
+                    // у Gemma 4 рассуждения по умолчанию выключены и включаются только так (Qwen3 читает тот же флаг)
+                    body.put("chat_template_kwargs", JSONObject().put("enable_thinking", true))
+                } else {
+                    // reasoning_effort=none по документации llama-server выключает рассуждения;
+                    // enable_thinking нужен шаблонам вроде Qwen3, остальные его игнорируют
+                    body.put("reasoning_effort", "none")
+                    body.put("chat_template_kwargs", JSONObject().put("enable_thinking", false))
                 }
             }
         }
@@ -466,7 +477,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
             "set" -> set(parts.getOrNull(1)?.lowercase(), parts.getOrNull(2))
             "show" -> sys(
-                "backend: ${backend.label}\nmodel: ${model.ifBlank { "—" }}\nhost: $host\nnick: ${nick.ifBlank { "—" }}\nthink: ${think ?: "по умолчанию"}\n" +
+                "backend: ${backend.label}\nmodel: ${model.ifBlank { "—" }}\nhost: $host\nnick: ${nick.ifBlank { "—" }}\nthink: ${if (thinkOn) "вкл" else "выкл"}\n" +
                     "system: ${systemPrompt.ifBlank { "—" }}\noptions: $options"
             )
             "load" -> {
@@ -487,19 +498,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun set(sub: String?, arg: String?) {
         when (sub) {
-            "nothink" -> {
-                think = false
-                sys("think: выкл")
-            }
-            "think" -> {
-                val level = arg?.trim()?.lowercase()
-                think = when (level) {
-                    "high", "medium", "low" -> level
-                    "false" -> false
-                    else -> true
-                }
-                sys("think: $think")
-            }
             "system" -> {
                 if (arg.isNullOrBlank()) {
                     sys("Использование: /set system <текст>")
@@ -522,7 +520,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
-            else -> sys("Не знаю /set ${sub.orEmpty()}. Есть: think, nothink, system, parameter.")
+            else -> sys("Не знаю /set ${sub.orEmpty()}. Есть: system, parameter. Рассуждения включаются кнопкой под полем ввода.")
         }
     }
 
