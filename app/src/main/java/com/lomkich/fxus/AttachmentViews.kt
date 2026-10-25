@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -37,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lomkich.fxus.comfy.ImageViewerDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -74,6 +77,12 @@ fun AttachmentRow(
     thumb: Dp = 64.dp,
     onRemove: ((Attachment) -> Unit)? = null,
 ) {
+    // тап по картинке открывает её на весь экран; состояние держим здесь, чтобы не трогать вызывающий код
+    val ctx = LocalContext.current
+    var viewing by remember { mutableStateOf<Attachment?>(null) }
+    viewing?.let { a ->
+        ImageViewerDialog(Attachments.imageFile(ctx, a), a.name, onDismiss = { viewing = null })
+    }
     Row(
         modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -81,7 +90,7 @@ fun AttachmentRow(
     ) {
         items.forEach { a ->
             Box {
-                if (a.kind == AttachKind.IMAGE) ImageChip(a, thumb) else FileChip(a, chipBg, thumb, onRemove != null)
+                if (a.kind == AttachKind.IMAGE) ImageChip(a, thumb) { viewing = a } else FileChip(a, chipBg, thumb, onRemove != null)
                 if (onRemove != null) RemoveBadge(Modifier.align(Alignment.TopEnd)) { onRemove(a) }
             }
         }
@@ -89,14 +98,14 @@ fun AttachmentRow(
 }
 
 @Composable
-private fun ImageChip(a: Attachment, size: Dp) {
+private fun ImageChip(a: Attachment, size: Dp, onClick: () -> Unit) {
     val ctx = LocalContext.current
     // декодируем в фоне, чтобы список сообщений не дёргался при прокрутке
     val bmp by produceState<ImageBitmap?>(null, a.file) {
         value = withContext(Dispatchers.IO) { Attachments.thumb(ctx, a)?.asImageBitmap() }
     }
     Box(
-        Modifier.size(size).clip(RoundedCornerShape(12.dp)).background(ColSurface),
+        Modifier.size(size).clip(RoundedCornerShape(12.dp)).background(ColSurface).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         bmp?.let {

@@ -62,6 +62,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
+import java.io.File
 
 private const val MAX_SCALE = 8f
 private const val DOUBLE_TAP_SCALE = 3f
@@ -69,6 +70,15 @@ private const val DOUBLE_TAP_SCALE = 3f
 @Composable
 fun ImageViewer(turn: Turn, onDismiss: () -> Unit, onDelete: () -> Unit) {
     val file = turn.file ?: return
+    ImageViewerDialog(file, turn.prompt, onDismiss, onDelete)
+}
+
+/**
+ * Полноэкранный просмотр картинки с зумом (щипок, двойной тап), сохранением, копированием и «поделиться».
+ * Подпись и кнопка «Удалить» необязательные: для вложений чата удалять отсюда нечего, поэтому onDelete = null.
+ */
+@Composable
+fun ImageViewerDialog(file: File, caption: String?, onDismiss: () -> Unit, onDelete: (() -> Unit)? = null) {
     val ctx = LocalContext.current
     val bitmap = rememberFileBitmap(file, 4096)
 
@@ -212,10 +222,10 @@ fun ImageViewer(turn: Turn, onDismiss: () -> Unit, onDelete: () -> Unit) {
                                 runCatching { ImageActions.share(ctx, file) }
                                     .onFailure { toast("Не удалось поделиться") }
                             }
-                            ViewerAction("Удалить", Color(0xFFFF8A80), onDelete)
+                            if (onDelete != null) ViewerAction("Удалить", Color(0xFFFF8A80), onDelete)
                         }
-                        Text(
-                            turn.prompt,
+                        if (!caption.isNullOrBlank()) Text(
+                            caption,
                             color = Color.White.copy(alpha = 0.92f),
                             fontSize = 14.sp,
                             modifier = Modifier
